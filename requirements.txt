@@ -1,0 +1,9 @@
+streamlit
+pvporcupine
+pyaudio
+openai
+pyttsx3
+requests
+beautifulsoup4
+python-dotenv
+pyyaml
