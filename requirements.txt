@@ -7,3 +7,6 @@ requests
 beautifulsoup4
 python-dotenv
 pyyaml
+sounddevice
+webrtcvad
+openai-whisper

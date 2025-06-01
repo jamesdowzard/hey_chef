@@ -10,9 +10,11 @@ from stt_whisper import WhisperSTT
 from llm_client import LLMClient, SYSTEM_PROMPT
 from tts_engine import TTSEngine
 
-# Silence Streamlit’s ScriptRunContext warning
+
+# Silence only the “missing ScriptRunContext” warning
 warnings.filterwarnings(
     "ignore",
+    message=".*missing ScriptRunContext.*",
     category=UserWarning,
     module="streamlit.runtime.scriptrunner"
 )
@@ -75,7 +77,8 @@ def start_voice_loop(recipe: str, maintain_history: bool):
     wwd = WakeWordDetector(keyword_path="porcupine_models/hey_chef.ppn", sensitivity=0.7)
 
     # b) Initialize Whisper STT
-    stt = WhisperSTT(record_seconds=6)
+    # stt = WhisperSTT(record_seconds=6)
+    stt = WhisperSTT(aggressiveness=1, max_silence_sec=1)
 
     # c) Initialize LLM client
     # llm = LLMClient(model="gpt-4o-mini")
@@ -96,26 +99,26 @@ def start_voice_loop(recipe: str, maintain_history: bool):
 
     try:
         while True:
-            # 1) Wait for wake word
-            print("[DEBUG] Waiting for wake word…")
+            # Wait for “Hey Chef”…
             wwd.detect_once()
             print("🟢 Wake word detected! Recording your question…")
 
-            # 2) Record & transcribe
-            wav_path = stt.record_audio()
-            question = stt.speech_to_text(wav_path)
-            print(f"[DEBUG] You asked: {question!r}")
+            # → Now record until silence instead of fixed 6 s:
+            wav_path = stt.record_until_silence()
+            user_question = stt.speech_to_text(wav_path)
+
+            print(f"[DEBUG] You asked: {user_question!r}")
 
             # 3) Query LLM
             print("[DEBUG] Sending prompt to LLM…")
             if history is not None:
                 # history already holds system+recipe, so send only the new question
-                answer = llm.ask(recipe_text="", user_question=question, history=history)
+                answer = llm.ask(recipe_text="", user_question=user_question, history=history)
                 # Append assistant’s reply so next turn retains full context
                 history.append({"role": "assistant", "content": answer})
             else:
                 # Stateless: send recipe+question each time
-                answer = llm.ask(recipe_text=recipe, user_question=question, history=None)
+                answer = llm.ask(recipe_text=recipe, user_question=user_question, history=None)
 
             print(f"[DEBUG] ChefBot’s answer: {answer!r}")
 
