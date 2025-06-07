@@ -86,6 +86,7 @@ def start_voice_loop(recipe: str, maintain_history: bool):
     # c) Initialize LLM client
     # llm = LLMClient(model="gpt-4o-mini")
     llm = LLMClient(model="gpt-4o")
+    # llm = LLMClient(model="gpt-3.5-turbo")
 
     # d) Initialize TTS engine
     tts = TTSEngine(macos_voice="Samantha", external_voice="alloy")

@@ -16,10 +16,10 @@
     - change max tokens to be less than 500
         - work out what the tokens coming back are first
     - use streaming of the output -- this could be great - DONE
-    - pre-warm the models
+    - pre-warm the models - DELAYED - NOT A BIG ISSUE, ONLY FIRST CALL
 
 - buy a raspberry pi and implement it on that
 
 
 
-- find offline models to use in the event internet is poort [low priority]
+- find offline models to use in the event internet is poor [low priority]
