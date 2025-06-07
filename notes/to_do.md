@@ -10,12 +10,12 @@
 - tell it to only speak in english
 
 - performance improvements
-    - move to local whisper model rather than api for near real-time transcription
+    - move to local whisper model rather than api for near real-time transcription - DONE
     - reducing max_silence_sec on the VAD
-    - move to gpt 3.5 turbo or a similar model for speed
+    - move to gpt 3.5 turbo or a similar model for speed - DONE
     - change max tokens to be less than 500
         - work out what the tokens coming back are first
-    - use streaming of the output -- this could be great
+    - use streaming of the output -- this could be great - DONE
     - pre-warm the models
 
 - buy a raspberry pi and implement it on that
