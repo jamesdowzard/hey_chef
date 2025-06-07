@@ -1,13 +1,14 @@
 # tts_engine_external.py
+#
+# A TTS engine that uses OpenAI’s speech endpoint, with incremental‐playback support.
 
 import os
 import tempfile
 import subprocess
-from dotenv import load_dotenv
 import shutil
+from dotenv import load_dotenv
 
-# Load .env so OPENAI_API_KEY (and USE_EXTERNAL_TTS) are available
-load_dotenv()
+load_dotenv()  # ensure OPENAI_API_KEY is set
 
 try:
     import openai
@@ -16,81 +17,67 @@ except ImportError:
 
 class ExternalTTSEngine:
     """
-    A TTS engine that uses OpenAI’s speech endpoint.
-    - Requires: OPENAI_API_KEY in environment (loaded from .env).
-    - Generates an MP3 via OpenAI, writes to a temp file, optionally applies sox tempo 1.25,
-      then plays via afplay.
+    - `say(text)` does a one-off TTS call + playback.
+    - `stream_and_play(text_generator, start_threshold=80)` buffers tokens from
+       any generator of strings and starts playback once the buffer length exceeds
+       start_threshold, then continues until exhausted.
     """
 
     def __init__(self, voice: str = "alloy"):
-        """
-        voice: The OpenAI TTS voice name.
-               Examples (if available): "alloy", "rainier", etc.
-        """
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
-            raise EnvironmentError("OPENAI_API_KEY not set in environment.")
+            raise EnvironmentError("OPENAI_API_KEY not set in environment")
         openai.api_key = api_key
 
         self.voice = voice
-
-        # Check if sox is available for speedup
         self.has_sox = bool(shutil.which("sox"))
 
     def say(self, text: str):
-        """
-        1) Request speech bytes from OpenAI (MP3).
-        2) Write to a temp MP3, optionally speed up by 1.25× using sox.
-        3) Play via afplay.
-        """
+        """One-off TTS → write MP3 → optional sox speed-up → afplay."""
         try:
-            # 1) Request TTS from OpenAI (response is HttpxBinaryResponseContent)
-            response = openai.audio.speech.create(
-                model="tts-1",    # or another TTS model you have access to
-                voice=self.voice,
-                input=text
-            )
-            # 2) Read raw MP3 bytes from the response object
-            audio_bytes = response.read()
+            resp = openai.audio.speech.create(model="tts-1", voice=self.voice, input=text)
+            audio = resp.read()
         except Exception as e:
-            print(f"⚠️ OpenAI TTS generation failed: {e}")
+            print(f"⚠️ OpenAI TTS failed: {e}")
             return
 
-        # 3) Write those bytes to a temporary MP3 file
-        tmp_original = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
-        try:
-            tmp_original.write(audio_bytes)
-            tmp_original.flush()
-            original_path = tmp_original.name
-        finally:
-            tmp_original.close()
+        # write MP3
+        tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+        tmp.write(audio); tmp.flush(); path = tmp.name; tmp.close()
 
-        # 4) If sox is installed, create a sped-up version at 1.25×
+        # optional speed-up
+        play_path = path
         if self.has_sox:
-            sped_up_file = tempfile.NamedTemporaryFile(suffix="_fast.mp3", delete=False)
-            sped_up_file.close()
-            sped_up_path = sped_up_file.name
+            fast = tempfile.NamedTemporaryFile(suffix="_fast.mp3", delete=False)
+            fast.close()
             try:
-                subprocess.run(
-                    ["sox", original_path, sped_up_path, "tempo", "1.25"],
-                    check=True
-                )
-                play_path = sped_up_path
-            except subprocess.CalledProcessError as e:
-                print(f"⚠️ sox speedup failed: {e}. Playing original MP3.")
-                play_path = original_path
-        else:
-            # No sox: just play the original
-            play_path = original_path
+                subprocess.run(["sox", path, fast.name, "tempo", "1.25"], check=True)
+                play_path = fast.name
+            except subprocess.CalledProcessError:
+                play_path = path
 
-        # 5) Play the chosen file via afplay
+        # playback + cleanup
         try:
             subprocess.run(["afplay", play_path], check=True)
-        except subprocess.CalledProcessError as e:
-            print(f"⚠️ Error playing external TTS file: {e}")
         finally:
-            # 6) Clean up both files
-            if os.path.exists(original_path):
-                os.remove(original_path)
-            if self.has_sox and os.path.exists(sped_up_path):
-                os.remove(sped_up_path)
+            for p in {path, play_path}:
+                if os.path.exists(p):
+                    os.remove(p)
+
+    def stream_and_play(self, text_generator, start_threshold: int = 80):
+        """
+        text_generator: any iterator yielding str chunks (e.g. LLMClient.stream()).
+        Buffers until start_threshold chars, then calls self.say(buffer)
+        and continues flushing each remaining chunk directly.
+        """
+        buffer = ""
+        started = False
+        for chunk in text_generator:
+            buffer += chunk
+            if not started and len(buffer) >= start_threshold:
+                self.say(buffer)
+                started = True
+                buffer = ""
+        # final flush
+        if buffer:
+            self.say(buffer)

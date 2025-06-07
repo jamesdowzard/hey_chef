@@ -1,7 +1,7 @@
 # llm_client.py
 #
-# A minimal OpenAI GPT-4o client. Reads a system prompt from config.yaml,
-# and now optionally supports passing in a conversation history _without_ repeating the recipe.
+# A minimal OpenAI GPT client. Reads a system prompt from config.yaml,
+# and offers both blocking `ask()` and streaming `stream()` methods.
 
 import os
 import openai
@@ -11,10 +11,10 @@ from dotenv import load_dotenv
 # -----------------------------------------------------------------------------
 # 1) LOAD ENV & CONFIG
 # -----------------------------------------------------------------------------
-load_dotenv()  # loads OPENAI_API_KEY, USE_EXTERNAL_TTS, etc.
+load_dotenv()  # loads OPENAI_API_KEY, etc.
 
 if "OPENAI_API_KEY" not in os.environ or not os.environ["OPENAI_API_KEY"].strip():
-    raise EnvironmentError("Please set the OPENAI_API_KEY environment variable (in .env).")
+    raise EnvironmentError("Please set OPENAI_API_KEY in .env")
 openai.api_key = os.environ["OPENAI_API_KEY"]
 
 _config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
@@ -31,59 +31,55 @@ if not SYSTEM_PROMPT:
 
 class LLMClient:
     """
-    Wraps calls to OpenAI’s ChatCompletion for GPT-4o, with optional history support.
+    Wraps OpenAI ChatCompletion calls:
+      • ask(...)    → full blocking reply
+      • stream(...) → yields text deltas as they arrive
     """
 
-    def __init__(self, model: str = "gpt-4o-mini"):
-        """
-        model: which OpenAI model to use (e.g. "gpt-4o", "gpt-4o-mini", etc.)
-        """
+    def __init__(self, model: str = "gpt-3.5-turbo", max_tokens: int = 150, temperature: float = 0.2):
         self.model = model
+        self.max_tokens = max_tokens
+        self.temperature = temperature
 
-    def ask(self,
-            recipe_text: str,
-            user_question: str,
-            history: list[dict] = None
-    ) -> str:
-        """
-        Sends a combined prompt to the LLM.  
-        If `history` is None, we build:
-            [ {role: "system", content: SYSTEM_PROMPT},
-              {role: "user",   content: "Here is my recipe:\n{recipe_text}\n\nQuestion: {user_question}"} ]
-
-        If `history` is NOT None, we assume history already contains:
-           [ {role:"system", content:SYSTEM_PROMPT},
-             {role:"user", content:"Here is my recipe:\n{original_recipe}"} ,
-             {role:"assistant", content:"(previous reply)"} , … ]
-        and only append:
-           {role:"user", content: "{user_question}"}
-        so the recipe isn’t resent each time.
-
-        The caller (e.g. `start_voice_loop`) must do:
-            history.append({"role":"assistant","content": reply})
-        after receiving `reply`.
-
-        Returns the assistant’s text response.
-        """
-        if history:
-            # We already seeded history once (with system + recipe),
-            # so now just append the new question (no recipe).
-            history.append({"role": "user", "content": user_question})
-            messages = history
-        else:
-            # No history means “stateless” mode → include both recipe and question
-            system_msg = {"role": "system", "content": SYSTEM_PROMPT}
-            user_msg = {
-                "role": "user",
-                "content": f"Here is my recipe:\n{recipe_text}\n\nQuestion: {user_question}"
-            }
-            messages = [system_msg, user_msg]
-
-        response = openai.chat.completions.create(
+    def ask(self, recipe_text: str, user_question: str, history: list[dict] = None) -> str:
+        """Blocking call; returns the full assistant reply."""
+        messages = self._build_messages(recipe_text, user_question, history)
+        resp = openai.chat.completions.create(
             model=self.model,
             messages=messages,
-            temperature=0.2,
-            max_tokens=500
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
         )
-        reply = response.choices[0].message.content.strip()
-        return reply
+        return resp.choices[0].message.content.strip()
+
+    def stream(self, recipe_text: str, user_question: str, history: list[dict] = None):
+        """
+        Streaming call; yields each chunk of new text as it arrives.
+        Usage:
+            for delta in llm.stream(...):
+                handle_delta(delta)
+        """
+        messages = self._build_messages(recipe_text, user_question, history)
+        streamer = openai.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            stream=True,
+        )
+
+        for chunk in streamer:
+            yield chunk.choices[0].delta.get("content") or ""
+
+    def _build_messages(self, recipe_text, user_question, history):
+        if history:
+            history.append({"role": "user", "content": user_question})
+            return history
+        else:
+            return [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": f"Here is my recipe:\n{recipe_text}\n\nQuestion: {user_question}"
+                }
+            ]
