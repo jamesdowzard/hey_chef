@@ -51,7 +51,7 @@ class ExternalTTSEngine:
             fast = tempfile.NamedTemporaryFile(suffix="_fast.mp3", delete=False)
             fast.close()
             try:
-                subprocess.run(["sox", path, fast.name, "tempo", "1.25"], check=True)
+                subprocess.run(["sox", path, fast.name, "tempo", "1.1"], check=True)
                 play_path = fast.name
             except subprocess.CalledProcessError:
                 play_path = path

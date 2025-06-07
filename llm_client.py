@@ -17,7 +17,8 @@ if "OPENAI_API_KEY" not in os.environ or not os.environ["OPENAI_API_KEY"].strip(
     raise EnvironmentError("Please set OPENAI_API_KEY in .env")
 openai.api_key = os.environ["OPENAI_API_KEY"]
 
-_config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+# _config_path = os.path.join(os.path.dirname(__file__), "config.yaml")
+_config_path = os.path.join(os.path.dirname(__file__), "config_eng.yaml")
 if not os.path.isfile(_config_path):
     raise FileNotFoundError(f"Missing config.yaml at {_config_path!r}")
 
