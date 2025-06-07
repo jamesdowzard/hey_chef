@@ -19,8 +19,8 @@ class ExternalTTSEngine:
     """
     - `say(text)` does a one-off TTS call + playback.
     - `stream_and_play(text_generator, start_threshold=80)` buffers tokens from
-       any generator of strings and starts playback once the buffer length exceeds
-       start_threshold, then continues until exhausted.
+       any iterator of strings, starts playback once the buffer length exceeds
+       start_threshold, then continues until exhausted, and RETURNS the full text.
     """
 
     def __init__(self, voice: str = "alloy"):
@@ -51,7 +51,7 @@ class ExternalTTSEngine:
             fast = tempfile.NamedTemporaryFile(suffix="_fast.mp3", delete=False)
             fast.close()
             try:
-                subprocess.run(["sox", path, fast.name, "tempo", "1.1"], check=True)
+                subprocess.run(["sox", path, fast.name, "tempo", "1.25"], check=True)
                 play_path = fast.name
             except subprocess.CalledProcessError:
                 play_path = path
@@ -64,20 +64,28 @@ class ExternalTTSEngine:
                 if os.path.exists(p):
                     os.remove(p)
 
-    def stream_and_play(self, text_generator, start_threshold: int = 80):
+    def stream_and_play(self, text_generator, start_threshold: int = 80) -> str:
         """
         text_generator: any iterator yielding str chunks (e.g. LLMClient.stream()).
         Buffers until start_threshold chars, then calls self.say(buffer)
         and continues flushing each remaining chunk directly.
+        Returns the full accumulated text.
         """
+        full_text = ""
         buffer = ""
         started = False
+
         for chunk in text_generator:
             buffer += chunk
+            full_text += chunk
+
             if not started and len(buffer) >= start_threshold:
                 self.say(buffer)
                 started = True
                 buffer = ""
+
         # final flush
         if buffer:
             self.say(buffer)
+
+        return full_text

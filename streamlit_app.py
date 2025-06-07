@@ -1,5 +1,3 @@
-# streamlit_app.py
-
 import warnings
 
 # Silence only the “missing ScriptRunContext” warning
@@ -19,9 +17,6 @@ from stt_whisper import WhisperSTT
 from llm_client import LLMClient, SYSTEM_PROMPT
 from tts_engine import TTSEngine
 
-
-
-
 # -----------------------------------------------------------------------------
 # 1) PAGE SETUP
 # -----------------------------------------------------------------------------
@@ -29,17 +24,75 @@ st.set_page_config(page_title="Hey Chef", page_icon="🍳", layout="centered")
 st.title("🍳 Hey Chef")
 st.markdown(
     """
-    **Step 1.** Paste or edit your recipe in the box below, then click **Save Recipe**.  
-    **Step 2.** Toggle **Maintain History** if you want ChefBot to remember past queries (recipe sent once only).  
+    **Step 1.** Paste or edit your recipe in the box below.  
+    **Step 2.** Configure history and streaming options on the right.  
     **Step 3.** Click **Start Listening**.  
-    In your terminal/console you’ll see “Listening for ‘Hey Chef’…”.  
-    **Step 4.** Say **“Hey Chef”** out loud, then ask your cooking question.  
+    In your terminal you’ll see “Listening for ‘Hey Chef’…”.  
+    **Step 4.** Say **“Hey Chef”** then ask your cooking question.  
     **Step 5.** ChefBot will reply via text‐to‐speech.  
     """
 )
 
 # -----------------------------------------------------------------------------
-# 2) SESSION_STATE INITIALIZATION
+# 2) BACKGROUND THREAD FUNCTION
+# -----------------------------------------------------------------------------
+def start_voice_loop(recipe: str, maintain_history: bool, streaming: bool):
+    print(f"[DEBUG] recipe length = {len(recipe)}")
+    # Initialize components
+    wwd = WakeWordDetector(keyword_path="porcupine_models/hey_chef.ppn", sensitivity=0.7)
+    stt = WhisperSTT(aggressiveness=1, max_silence_sec=1)
+    llm = LLMClient(model="gpt-4o")
+    tts = TTSEngine(macos_voice="Samantha", external_voice="alloy")
+
+    history = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": f"Here is my recipe:\n{recipe}"}
+    ] if maintain_history else None
+
+    try:
+        while True:
+            wwd.detect_once()
+            wav_path = stt.record_until_silence()
+            user_question = stt.speech_to_text(wav_path)
+
+            if streaming:
+                stream_gen = llm.stream(
+                    recipe_text=(recipe if history is None else ""),
+                    user_question=user_question,
+                    history=history
+                )
+                answer_text = tts.stream_and_play(stream_gen, start_threshold=80)
+            else:
+                answer_text = llm.ask(
+                    recipe_text=(recipe if history is None else ""),
+                    user_question=user_question,
+                    history=history
+                )
+                # Speak full reply via streaming API on single-element generator
+                tts.stream_and_play(iter([answer_text]), start_threshold=0)
+
+            if history is not None:
+                history.append({"role": "assistant", "content": answer_text})
+
+            # Store for UI
+            st.session_state.last_answer = answer_text
+    except Exception as e:
+        print(f"⚠️ Voice loop stopped: {e}")
+    finally:
+        stt.cleanup()
+
+# -----------------------------------------------------------------------------
+# 3) DISPLAY ANSWER FUNCTION
+# -----------------------------------------------------------------------------
+def check_and_display_answer():
+    ans = st.session_state.get("last_answer", "").strip()
+    if ans:
+        st.write("**ChefBot says:**")
+        st.markdown(f"> {ans}")
+        st.session_state.last_answer = ""
+
+# -----------------------------------------------------------------------------
+# 4) SESSION_STATE INITIALIZATION
 # -----------------------------------------------------------------------------
 if "recipe_text" not in st.session_state:
     st.session_state.recipe_text = ""
@@ -47,137 +100,40 @@ if "last_answer" not in st.session_state:
     st.session_state.last_answer = ""
 
 # -----------------------------------------------------------------------------
-# 3) USER INPUT: RECIPE & HISTORY TOGGLE
+# 5) USER INPUT + CONTROLS LAYOUT
 # -----------------------------------------------------------------------------
-recipe_input = st.text_area(
-    label="Paste your recipe (plain text or markdown):",
-    value=st.session_state.recipe_text,
-    height=300,
-)
+col1, col2 = st.columns([3, 1])
 
-if st.button("Save Recipe"):
-    st.session_state.recipe_text = recipe_input
-    st.success("✅ Recipe saved! Now click **Start Listening**.")
+# Left column: recipe input
+with col1:
+    recipe_input = st.text_area(
+        label="Paste your recipe (plain text or markdown):",
+        value=st.session_state.recipe_text,
+        height=300,
+    )
+    if st.button("Save Recipe"):
+        st.session_state.recipe_text = recipe_input
+        st.success("✅ Recipe saved!")
 
-use_history = st.checkbox("Maintain conversation history", value=True)
-
-# -----------------------------------------------------------------------------
-# 4) BACKGROUND THREAD FUNCTION
-# -----------------------------------------------------------------------------
-def start_voice_loop(recipe: str, maintain_history: bool):
-    """
-    Background thread logic:
-      1) Wait for “Hey Chef” via Porcupine
-      2) Record & transcribe via Whisper STT
-      3) Call LLM (with or without maintaining history)
-      4) Speak via TTS
-    """
-    print(f"[DEBUG] (thread) recipe length = {len(recipe)}")
-    preview = recipe[:50] + "..." if len(recipe) > 50 else recipe
-    print(f"[DEBUG] (thread) Recipe preview: {preview!r}")
-
-    # a) Initialize Porcupine wake-word detector
-    wwd = WakeWordDetector(keyword_path="porcupine_models/hey_chef.ppn", sensitivity=0.7)
-
-    # b) Initialize Whisper STT
-    # stt = WhisperSTT(record_seconds=6)
-    stt = WhisperSTT(aggressiveness=1, max_silence_sec=1)
-
-    # c) Initialize LLM client
-    # llm = LLMClient(model="gpt-4o-mini")
-    llm = LLMClient(model="gpt-4o")
-    # llm = LLMClient(model="gpt-3.5-turbo")
-
-    # d) Initialize TTS engine
-    tts = TTSEngine(macos_voice="Samantha", external_voice="alloy")
-
-    # e) Prepare local history if requested
-    if maintain_history:
-        # Create a fresh copy so the thread owns its own list
-        history = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user",   "content": f"Here is my recipe:\n{recipe}"}
-        ]
-    else:
-        history = None
-
-    try:
-        while True:
-            # Wait for “Hey Chef”…
-            wwd.detect_once()
-            print("🟢 Wake word detected! Recording your question…")
-
-            # → Now record until silence instead of fixed 6 s:
-            wav_path = stt.record_until_silence()
-            user_question = stt.speech_to_text(wav_path)
-
-            print(f"[DEBUG] You asked: {user_question!r}")
-
-            # 3) Query LLM
-            print("[DEBUG] Sending prompt to LLM…")
-            if history is not None:
-                # history already holds system+recipe, so send only the new question
-                answer = llm.ask(recipe_text="", user_question=user_question, history=history)
-                # Append assistant’s reply so next turn retains full context
-                history.append({"role": "assistant", "content": answer})
-            else:
-                # Stateless: send recipe+question each time
-                answer = llm.ask(recipe_text=recipe, user_question=user_question, history=None)
-
-            print(f"[DEBUG] ChefBot’s answer: {answer!r}")
-
-            # 4) Store answer so main thread can render it
-            st.session_state.last_answer = answer
-
-            # 5) Speak the answer
-            print("[DEBUG] Invoking TTS to speak answer…")
-            tts.say(answer)
-            print("[DEBUG] Done speaking. Looping back…\n")
-
-    except Exception as e:
-        print(f"⚠️ Voice loop stopped due to error: {e}")
-    finally:
-        stt.cleanup()
-        print("🛑 Voice loop terminated.")
-
-
-# -----------------------------------------------------------------------------
-# 5) MAIN-THREAD: START LISTENING BUTTON & DISPLAY ANSWER
-# -----------------------------------------------------------------------------
-def check_and_display_answer():
-    """
-    On each Streamlit rerun, if last_answer is nonempty, show it and clear it.
-    """
-    ans = st.session_state.get("last_answer", "").strip()
-    if ans:
-        st.write("**ChefBot says:**")
-        st.markdown(f"> {ans}")
-        # Clear it so we don’t repeatedly display the same answer
-        st.session_state.last_answer = ""
-
-
-if st.button("Start Listening"):
-    recipe_to_use = st.session_state.get("recipe_text", "").strip()
-    if not recipe_to_use:
-        st.error("❌ Paste a recipe and click 'Save Recipe' first.")
-    else:
-        # Build initial history or None
-        if use_history:
-            initial_history = [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user",   "content": f"Here is my recipe:\n{recipe_to_use}"}
-            ]
+# Right column: options and start button
+with col2:
+    st.write("### Options")
+    use_history = st.checkbox("Maintain history", value=True)
+    use_streaming = st.checkbox("Use streaming", value=False)
+    if st.button("Start Listening"):
+        recipe_to_use = st.session_state.get("recipe_text", "").strip()
+        if not recipe_to_use:
+            st.error("❌ Paste & save a recipe first.")
         else:
-            initial_history = None
+            thread = threading.Thread(
+                target=start_voice_loop,
+                args=(recipe_to_use, use_history, use_streaming),
+                daemon=True
+            )
+            thread.start()
+            st.success("🔊 Voice loop started. Check console.")
 
-        # Start background thread, passing in recipe and a boolean for history
-        thread = threading.Thread(
-            target=start_voice_loop,
-            args=(recipe_to_use, use_history),
-            daemon=True
-        )
-        thread.start()
-        st.success("🔊 Voice loop started. Check your console for logs.")
-
-# Every rerun: check if there’s a new answer to display
+# -----------------------------------------------------------------------------
+# 6) RERUN: DISPLAY ANSWER
+# -----------------------------------------------------------------------------
 check_and_display_answer()
