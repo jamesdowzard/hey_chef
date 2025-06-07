@@ -5,7 +5,6 @@
 #   • OpenAI’s TTS via the `tts-1` model, post‐processed with sox to 1.25× speed.
 
 import os
-import sys
 import subprocess
 import tempfile
 from dotenv import load_dotenv
@@ -24,37 +23,33 @@ class TTSEngine:
     """
     If USE_EXTERNAL_TTS is set in the environment, delegate to ExternalTTSEngine (OpenAI TTS).
     Otherwise, use macOS’s built-in `say -v <voice> -r <rate>` + `afplay`.
-    Both modes speak at 1.25x speed.
+    Provides both one-off `say()` and streaming `stream_and_play()` methods.
     """
 
     def __init__(self, macos_voice: str = "Samantha", external_voice: str = "alloy"):
         """
-        macos_voice: name of a local macOS TTS voice (e.g. "Samantha", "Victoria").
-        external_voice: name of an OpenAI TTS voice (e.g. "alloy").
+        macos_voice: name of a local macOS TTS voice.
+        external_voice: name of an OpenAI TTS voice.
         """
         # True if USE_EXTERNAL_TTS is set to a non-empty value
         self.use_external = bool(os.getenv("USE_EXTERNAL_TTS", "").strip())
         self.macos_voice = macos_voice
+        self.macos_rate = 219  # ~1.25× default WPM
 
         if self.use_external:
             if ExternalTTSEngine is None:
                 raise ImportError(
-                    "ExternalTTSEngine not available. "
-                    "Ensure you have tts_engine_external.py and openai installed."
+                    "ExternalTTSEngine not available. Ensure tts_engine_external.py is present and openai installed."
                 )
-            # Initialize the external engine
             self.external_tts = ExternalTTSEngine(voice=external_voice)
         else:
             self.external_tts = None
 
-        # For macOS `say`, default words-per-minute is ~175; 1.25× that is ~219
-        self.macos_rate = 219
-
     def say(self, text: str):
         """
         Speak `text`.  
-        If USE_EXTERNAL_TTS is truthy, use ExternalTTSEngine.say(), then speed up with sox.  
-        Otherwise, use macOS’s say with -r 219 for 1.25× speed.
+        If external mode, delegate to ExternalTTSEngine.say().  
+        Otherwise use macOS voices for a single utterance.
         """
         if self.use_external and self.external_tts:
             self.external_tts.say(text)
@@ -63,24 +58,37 @@ class TTSEngine:
 
     def _say_macos(self, text: str):
         """
-        Generate a temp AIFF via: say -v <macos_voice> -r <macos_rate> -o <path> "<text>", 
-        then play it via afplay.
+        Generate a temp AIFF via say, then play it via afplay.
         """
         tmpfile = tempfile.NamedTemporaryFile(suffix=".aiff", delete=False)
         tmpfile.close()
         aiff_path = tmpfile.name
 
         try:
-            # 1) Generate the AIFF using the chosen macOS voice at 1.25× speed
             subprocess.run(
                 ["say", "-v", self.macos_voice, "-r", str(self.macos_rate), "-o", aiff_path, text],
                 check=True
             )
-            # 2) Play it using afplay
             subprocess.run(["afplay", aiff_path], check=True)
         except subprocess.CalledProcessError as e:
             print(f"⚠️ macOS TTS error (say/afplay): {e}")
         finally:
-            # 3) Clean up the temporary file
             if os.path.exists(aiff_path):
                 os.remove(aiff_path)
+
+    def stream_and_play(self, text_generator, start_threshold: int = 80) -> str:
+        """
+        text_generator: iterator yielding strings (e.g. LLMClient.stream()).
+        Buffers until `start_threshold` chars, starts playback, then continues.
+        Returns full assembled text.
+        """
+        if self.use_external and self.external_tts:
+            return self.external_tts.stream_and_play(text_generator, start_threshold)
+
+        # Fallback: collect all chunks then speak once
+        full_text = ""
+        for chunk in text_generator:
+            full_text += chunk
+        # One-shot macOS TTS
+        self._say_macos(full_text)
+        return full_text
