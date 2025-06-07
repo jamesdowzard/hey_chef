@@ -1,82 +1,171 @@
 # stt_whisper.py
 #
-# Records a fixed-duration audio clip from the default microphone,
-# writes it to a temporary WAV file, and transcribes via OpenAI Whisper.
+# Records from the default microphone until the user stops speaking (detected via VAD),
+# saves to a temporary WAV file, then calls the OpenAI Whisper API (new v1.x interface) to transcribe.
 
-import pyaudio
-import wave
-import tempfile
-import openai
 import os
+import wave
+import webrtcvad
+import sounddevice as sd
+import numpy as np
+
+from tempfile import NamedTemporaryFile
+from dotenv import load_dotenv
+
+# Load OPENAI_API_KEY from .env
+load_dotenv()
+import openai
+
+if "OPENAI_API_KEY" not in os.environ or not os.environ["OPENAI_API_KEY"].strip():
+    raise EnvironmentError("Please set OPENAI_API_KEY in your .env before running.")
+openai.api_key = os.environ["OPENAI_API_KEY"]
+
 
 class WhisperSTT:
     """
-    Records a short audio snippet (default 6 seconds) and transcribes with OpenAI Whisper.
+    Continuously listens to the mic until the user stops speaking (detected via VAD).
+    Saves the captured audio to a temporary WAV, then uses OpenAI's Whisper API (v1.x) to transcribe.
     """
 
-    def __init__(self, record_seconds: int = 6, sample_rate: int = 16000, chunk: int = 1024):
+    def __init__(self, aggressiveness: int = 2, max_silence_sec: float = 0.5):
         """
-        record_seconds: how many seconds to record after wake word
-        sample_rate: must match Whisper’s expected sample rate (16 kHz)
-        chunk: frames per buffer
+        aggressiveness: VAD aggressiveness (0–3). 0 = least aggressive, 3 = most aggressive.
+        max_silence_sec: how many seconds of consecutive “no speech” before deciding the user is done.
         """
-        self.record_seconds = record_seconds
-        self.format = pyaudio.paInt16
-        self.channels = 1
-        self.rate = sample_rate
-        self.chunk = chunk
-        self.pa = pyaudio.PyAudio()
+        # Whisper expects 16 kHz, 16-bit PCM, mono WAV
+        self.sample_rate = 16000
+        self.frame_duration_ms = 30  # WebRTC VAD supports 10, 20, or 30 ms frames
+        self.frame_size = int(self.sample_rate * (self.frame_duration_ms / 1000.0))  # samples per frame
 
-        # Ensure OPENAI_API_KEY is set
-        if "OPENAI_API_KEY" not in os.environ:
-            raise EnvironmentError("Please set the OPENAI_API_KEY environment variable.")
-        openai.api_key = os.environ["OPENAI_API_KEY"]
+        self.vad = webrtcvad.Vad(aggressiveness)
+        self.max_silence_frames = int((max_silence_sec * 1000) / self.frame_duration_ms)
 
-    def record_audio(self) -> str:
+        # sounddevice stream will be opened lazily
+        self.stream = None
+
+    def _open_stream(self):
         """
-        Records from the default microphone for self.record_seconds,
-        saves to a temp WAV file, and returns its filepath.
+        Open a sounddevice RawInputStream with 16 kHz / 16-bit / mono and blocksize = frame_size.
         """
-        stream = self.pa.open(format=self.format,
-                              channels=self.channels,
-                              rate=self.rate,
-                              input=True,
-                              frames_per_buffer=self.chunk)
+        if self.stream is None:
+            self.stream = sd.RawInputStream(
+                samplerate=self.sample_rate,
+                blocksize=self.frame_size,
+                dtype="int16",  # 16-bit PCM
+                channels=1,     # mono
+            )
+            self.stream.start()
+
+    def _read_frame(self):
+        """
+        Read exactly one frame’s worth of bytes from the sounddevice stream.
+        Returns raw bytes or None on failure.
+        """
+        try:
+            data, _ = self.stream.read(self.frame_size)
+            # If data is a NumPy array, use .tobytes(); otherwise wrap in bytes()
+            if hasattr(data, "tobytes"):
+                return data.tobytes()
+            else:
+                return bytes(data)
+        except Exception as e:
+            print(f"⚠️ Error reading audio frame: {e}")
+            return None
+
+    def record_until_silence(self) -> str:
+        """
+        Records from the mic until “max_silence_sec” of consecutive silence is detected.
+        Returns the path to a temporary WAV file containing the captured speech.
+        """
+        print("🎤 Listening for speech… (speak now)")
+        self._open_stream()
+
         frames = []
-        print(f"🎤 Recording for {self.record_seconds} seconds…")
-        for _ in range(int(self.rate / self.chunk * self.record_seconds)):
-            data = stream.read(self.chunk, exception_on_overflow=False)
-            frames.append(data)
-        print("🛑 Recording complete.")
-        stream.stop_stream()
-        stream.close()
+        triggered = False
+        silence_frame_count = 0
 
-        # Write to a temp WAV
-        temp_wav = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-        with wave.open(temp_wav.name, "wb") as wf:
-            wf.setnchannels(self.channels)
-            wf.setsampwidth(self.pa.get_sample_size(self.format))
-            wf.setframerate(self.rate)
+        while True:
+            frame = self._read_frame()
+            if frame is None:
+                # Could not read from mic – break
+                break
+
+            is_speech = self.vad.is_speech(frame, sample_rate=self.sample_rate)
+
+            if not triggered:
+                # Haven’t seen speech yet
+                if is_speech:
+                    triggered = True
+                    frames.append(frame)
+                    silence_frame_count = 0
+                # else: keep waiting for first speech
+            else:
+                # Already in speech mode; continue buffering until enough silence
+                frames.append(frame)
+                if not is_speech:
+                    silence_frame_count += 1
+                    if silence_frame_count > self.max_silence_frames:
+                        # Enough consecutive silence → end recording
+                        print("🛑 Silence detected; finishing recording.")
+                        break
+                else:
+                    # Reset silence counter on any speech frame
+                    silence_frame_count = 0
+
+        # If no speech was detected at all, return an empty string
+        if not frames:
+            print("⚠️ No speech detected; returning empty path.")
+            return ""
+
+        # Write buffered frames to a temporary WAV file
+        tmp = NamedTemporaryFile(suffix=".wav", delete=False)
+        tmp_path = tmp.name
+        tmp.close()
+
+        with wave.open(tmp_path, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)  # 16 bits = 2 bytes
+            wf.setframerate(self.sample_rate)
             wf.writeframes(b"".join(frames))
 
-        return temp_wav.name
+        print(f"✅ Recorded speech to {tmp_path}")
+        return tmp_path
 
     def speech_to_text(self, wav_path: str) -> str:
         """
-        Uses OpenAI Whisper (whisper-1) to transcribe the given WAV file.
-        Returns the transcribed text.
+        Sends the WAV at `wav_path` to OpenAI Whisper API (v1.x) and returns the transcribed text.
         """
-        with open(wav_path, "rb") as audio_file:
-            transcript = openai.audio.transcriptions.create(
-                model="whisper-1",
-                file=audio_file
-            )
-        text = transcript.text.strip()
+        if not wav_path or not os.path.isfile(wav_path):
+            return ""
+
+        try:
+            with open(wav_path, "rb") as audio_file:
+                response = openai.audio.transcriptions.create(
+                    model="whisper-1",
+                    file=audio_file
+                )
+                text = response.text.strip()
+        except Exception as e:
+            print(f"⚠️ Whisper API call failed: {e}")
+            text = ""
+
+        # Clean up the temporary WAV file
+        try:
+            os.remove(wav_path)
+        except OSError:
+            pass
+
         print(f"📝 Transcribed: {text!r}")
         return text
 
     def cleanup(self):
         """
-        Cleanly terminate the PyAudio instance.
+        Gracefully close the sounddevice stream.
         """
-        self.pa.terminate()
+        if self.stream is not None:
+            try:
+                self.stream.stop()
+                self.stream.close()
+            except Exception:
+                pass
+            self.stream = None
