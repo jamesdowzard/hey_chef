@@ -1,15 +1,6 @@
 # streamlit_app.py
 
-import os
-import streamlit as st
-import threading
 import warnings
-
-from wake_porcupine import WakeWordDetector
-from stt_whisper import WhisperSTT
-from llm_client import LLMClient, SYSTEM_PROMPT
-from tts_engine import TTSEngine
-
 
 # Silence only the “missing ScriptRunContext” warning
 warnings.filterwarnings(
@@ -18,6 +9,18 @@ warnings.filterwarnings(
     category=UserWarning,
     module="streamlit.runtime.scriptrunner"
 )
+
+import os
+import streamlit as st
+import threading
+
+from wake_porcupine import WakeWordDetector
+from stt_whisper import WhisperSTT
+from llm_client import LLMClient, SYSTEM_PROMPT
+from tts_engine import TTSEngine
+
+
+
 
 # -----------------------------------------------------------------------------
 # 1) PAGE SETUP
