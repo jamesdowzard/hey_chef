@@ -50,9 +50,14 @@ A sophisticated voice-controlled cooking assistant that helps you with recipes u
 
 4. **Run the application**
    ```bash
-   python main.py
-   # or
+   # Recommended method:
    streamlit run main.py
+   
+   # Or use the convenience script:
+   ./run.sh
+   
+   # Or run directly (will auto-launch streamlit):
+   python main.py
    ```
 
 ## 🎭 Modes

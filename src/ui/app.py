@@ -29,6 +29,8 @@ class ChefApp:
     def __init__(self):
         """Initialize the application."""
         self.settings = Settings()
+        self.voice_loop_event = threading.Event()  # Thread-safe control
+        self.voice_loop_thread = None
         self._init_session_state()
         self._setup_page()
     
@@ -110,8 +112,10 @@ class ChefApp:
                     {"role": "user", "content": f"Here is my recipe:\n{recipe}"}
                 ]
             
-            # Main voice loop
-            while st.session_state.voice_loop_running:
+            print("🎤 Voice loop started. Say 'Hey Chef' to begin!")
+            
+            # Main voice loop - use threading.Event for control
+            while not self.voice_loop_event.is_set():
                 try:
                     # Wait for wake word
                     wwd.detect_once()
@@ -125,6 +129,8 @@ class ChefApp:
                     user_question = stt.speech_to_text(wav_path)
                     if not user_question.strip():
                         continue
+                    
+                    print(f"🗣️ User asked: {user_question}")
                     
                     # Get AI response
                     if streaming:
@@ -144,14 +150,19 @@ class ChefApp:
                             history=history,
                             sassy_mode=sassy_mode
                         )
-                        answer_text = tts.stream_and_play(iter([response]), start_threshold=0)
+                        # For non-streaming, speak the complete response at once
+                        tts.say(response)
+                        answer_text = response
                     
-                    # Update history and session state
+                    # Update history
                     if history is not None:
                         llm.update_history_with_response(history, answer_text, sassy_mode)
                     
+                    # Store response for UI (thread-safe assignment)
                     st.session_state.last_answer = answer_text
                     st.session_state.current_mode = 'sassy' if sassy_mode else 'normal'
+                    
+                    print(f"🤖 Assistant responded: {answer_text}")
                     
                 except Exception as e:
                     print(f"⚠️ Voice loop iteration error: {e}")
@@ -159,10 +170,11 @@ class ChefApp:
         
         except Exception as e:
             print(f"⚠️ Voice loop setup error: {e}")
-            st.session_state.voice_loop_running = False
+            self.voice_loop_event.set()  # Stop the loop on error
         
         finally:
             # Cleanup
+            print("🛑 Voice loop stopped.")
             try:
                 if 'stt' in locals():
                     stt.cleanup()
@@ -170,6 +182,9 @@ class ChefApp:
                     wwd.cleanup()
             except:
                 pass
+            
+            # Update UI state
+            st.session_state.voice_loop_running = False
     
     def _render_header(self):
         """Render the application header."""
@@ -239,6 +254,9 @@ class ChefApp:
             if st.session_state.voice_loop_running:
                 st.success("🟢 Listening for 'Hey Chef'...")
                 if st.button("🛑 Stop Listening", type="secondary"):
+                    self.voice_loop_event.set()  # Signal thread to stop
+                    if self.voice_loop_thread and self.voice_loop_thread.is_alive():
+                        self.voice_loop_thread.join(timeout=2)  # Wait for thread to finish
                     st.session_state.voice_loop_running = False
                     st.rerun()
             else:
@@ -354,13 +372,15 @@ class ChefApp:
                 st.error("❌ Please select or enter a recipe before starting.")
             else:
                 st.session_state.voice_loop_running = True
+                self.voice_loop_event.clear()  # Clear the stop event
                 
                 # Start voice loop in background thread
-                threading.Thread(
+                self.voice_loop_thread = threading.Thread(
                     target=self._start_voice_loop,
                     args=(recipe, use_history, use_streaming, sassy_mode),
                     daemon=True
-                ).start()
+                )
+                self.voice_loop_thread.start()
                 
                 st.success("🔊 Voice assistant started! Say 'Hey Chef' and ask your question.")
                 st.rerun()
@@ -368,10 +388,10 @@ class ChefApp:
         # Display last response
         self._render_last_response()
         
-        # Auto-refresh to show responses
+        # Auto-refresh to show responses (only if voice loop is running)
         if st.session_state.voice_loop_running:
             import time
-            time.sleep(0.5)
+            time.sleep(1)  # Slightly longer sleep to reduce CPU usage
             st.rerun()
 
 
