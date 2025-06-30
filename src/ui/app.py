@@ -114,7 +114,9 @@ class ChefApp:
             'voice_loop_running': False,
             'current_mode': 'normal',
             'chef_mode': 'normal',  # Track chef personality mode
-            'selected_recipe': ''
+            'selected_recipe': '',
+            'selected_source': 'Default',
+            'selected_notion_choice_index': 0
         }
         
         for key, default_value in defaults.items():
@@ -126,7 +128,7 @@ class ChefApp:
         st.set_page_config(
             page_title=self.settings.ui.page_title,
             page_icon=self.settings.ui.page_icon,
-            layout=self.settings.ui.layout
+            layout="wide"
         )
     
     def _load_default_recipe(self) -> str:
@@ -257,10 +259,22 @@ class ChefApp:
                     wwd.cleanup()
             except:
                 pass
+
+            # Kill any playing audio processes
+            self._stop_audio_processes()
             
             # Update UI state
             st.session_state.voice_loop_running = False
     
+    def _stop_audio_processes(self):
+        """Kill any running TTS audio processes."""
+        import subprocess
+        for proc in ["afplay", "play", "say"]:
+            try:
+                subprocess.run(["pkill", proc], check=False)
+            except Exception as e:
+                print(f"⚠️ Failed to kill audio process {proc}: {e}")
+
     def _render_header(self):
         """Render the application header."""
         st.title(f"{self.settings.ui.page_icon} Hey Chef")
@@ -349,6 +363,7 @@ class ChefApp:
                     self.voice_loop_event.set()  # Signal thread to stop
                     if self.voice_loop_thread and self.voice_loop_thread.is_alive():
                         self.voice_loop_thread.join(timeout=2)  # Wait for thread to finish
+                    self._stop_audio_processes()  # Kill any playing audio
                     st.session_state.voice_loop_running = False
                     st.rerun()
             
@@ -359,14 +374,24 @@ class ChefApp:
         """Render the recipe selection section."""
         st.subheader("📝 Recipe Selection")
         
-        col1, col2 = st.columns([3, 1])
+        col1, col2 = st.columns([5, 1])
         
         with col1:
+            # Persist selected recipe source between reruns
+            sources = ["Default", "Notion DB", "Custom"]
+            default_index = sources.index(st.session_state.selected_source) if st.session_state.selected_source in sources else 0
             source = st.radio(
                 "Recipe source",
-                ("Default", "Notion DB", "Custom"),
-                index=0
+                sources,
+                index=default_index,
+                format_func=lambda x: {
+                    "Default": "📄 Default",
+                    "Notion DB": "🗂️ Notion DB",
+                    "Custom": "✏️ Custom"
+                }[x],
+                horizontal=True
             )
+            st.session_state.selected_source = source
 
             if source == "Default":
                 default_recipe = self._load_default_recipe()
@@ -397,7 +422,10 @@ class ChefApp:
                         else:
                             name = "<Unnamed>"
                         options.append(name)
-                    choice = st.selectbox("Select a recipe", options)
+                    # Persist selected Notion recipe choice index
+                    default_notion_index = st.session_state.selected_notion_choice_index if 0 <= st.session_state.selected_notion_choice_index < len(options) else 0
+                    choice = st.selectbox("Select a recipe", options, index=default_notion_index)
+                    st.session_state.selected_notion_choice_index = options.index(choice)
                     selected = next(r for r, name in zip(recipes, options) if name == choice)
                     details = fetch_recipe_details(selected.get("id"))
                     content_md = format_notion_recipe(details)
@@ -498,11 +526,26 @@ class ChefApp:
         # Render header after mode is set
         self._render_header()
 
-        # Main page Start Listening button
+        # Main page voice controls (start/stop and status)
         start_main = False
-        if not st.session_state.voice_loop_running:
-            if st.button("🎤 Start Listening", key="main_start_listening", type="primary", help="Start voice interaction"):
+        stop_requested = False
+        col_ctrl1, col_ctrl2 = st.columns([1, 3])
+        if st.session_state.voice_loop_running:
+            col_ctrl2.write("")  # placeholder for spacing
+            st.success("🟢 Listening for 'Hey Chef'...")
+            if col_ctrl1.button("🛑 Stop Listening", key="main_stop_listening", type="secondary"):
+                stop_requested = True
+        else:
+            if col_ctrl1.button("🎤 Start Listening", key="main_start_listening", type="primary", help="Start voice interaction"):
                 start_main = True
+        # Handle stop action immediately
+        if stop_requested:
+            self.voice_loop_event.set()
+            if self.voice_loop_thread and self.voice_loop_thread.is_alive():
+                self.voice_loop_thread.join(timeout=2)
+            self._stop_audio_processes()
+            st.session_state.voice_loop_running = False
+            st.rerun()
         should_start = start_main
 
         # Recipe section (cached during active voice loop to avoid repeated GETs)

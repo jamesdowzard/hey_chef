@@ -35,7 +35,7 @@ class UISettings:
     """UI-related settings"""
     page_title: str = "Hey Chef"
     page_icon: str = "🍳"
-    layout: str = "centered"
+    layout: str = "wide"
     default_use_history: bool = True
     default_use_streaming: bool = False
     default_sassy_mode: bool = False
