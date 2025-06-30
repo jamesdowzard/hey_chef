@@ -199,7 +199,8 @@ class ChefApp:
             'sassy': ("😈", "Sassy Chef Mode"),
             'gordon_ramsay': ("🔥", "Gordon Ramsay Mode")
         }
-        mode_emoji, mode_text = mode_indicators.get(st.session_state.current_mode, ("😊", "Friendly Chef Mode"))
+        selected_mode = st.session_state.chef_mode  
+        mode_emoji, mode_text = mode_indicators.get(selected_mode, ("😊", "Friendly Chef Mode"))
         
         st.markdown(
             f"""
@@ -269,7 +270,7 @@ class ChefApp:
             # Voice controls
             st.subheader("🎤 Voice Control")
             
-            # Status indicator
+            # Show status and Stop option
             if st.session_state.voice_loop_running:
                 st.success("🟢 Listening for 'Hey Chef'...")
                 if st.button("🛑 Stop Listening", type="secondary"):
@@ -278,16 +279,8 @@ class ChefApp:
                         self.voice_loop_thread.join(timeout=2)  # Wait for thread to finish
                     st.session_state.voice_loop_running = False
                     st.rerun()
-            else:
-                start_button = st.button(
-                    "🎤 Start Listening", 
-                    type="primary",
-                    help="Start voice interaction"
-                )
-                
-                if start_button:
-                    return chef_mode, use_history, use_streaming, True
             
+            # Always return False for sidebar start; starting handled on main page
             return chef_mode, use_history, use_streaming, False
     
     def _render_recipe_section(self) -> str:
@@ -396,12 +389,19 @@ class ChefApp:
     
     def run(self):
         """Main application entry point."""
-        # Render UI components
+        # Sidebar controls (update mode; no start here)
+        chef_mode, use_history, use_streaming, _ = self._render_sidebar()
+
+        # Render header after mode is set
         self._render_header()
-        
-        # Sidebar controls
-        chef_mode, use_history, use_streaming, should_start = self._render_sidebar()
-        
+
+        # Main page Start Listening button
+        start_main = False
+        if not st.session_state.voice_loop_running:
+            if st.button("🎤 Start Listening", key="main_start_listening", type="primary", help="Start voice interaction"):
+                start_main = True
+        should_start = start_main
+
         # Recipe section
         recipe = self._render_recipe_section()
         
