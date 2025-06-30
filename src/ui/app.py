@@ -369,13 +369,21 @@ class ChefApp:
                 st.write("Fetching recipes from Notion...")
                 try:
                     recipes = fetch_recipes()
-                    options = [
-                        next(
-                            (t.get("plain_text") for t in r["properties"]["Name"]["title"] if t.get("plain_text")),
-                            "<Unnamed>"
-                        )
-                        for r in recipes
-                    ]
+                    # Extract recipe names from title property for each recipe
+                    options = []
+                    for r in recipes:
+                        props = r.get("properties", {})
+                        # Find the title property (type "title")
+                        title_prop = None
+                        for prop in props.values():
+                            if prop.get("type") == "title":
+                                title_prop = prop
+                                break
+                        if title_prop and title_prop.get("title"):
+                            name = next((t.get("plain_text") for t in title_prop["title"] if t.get("plain_text")), "<Unnamed>")
+                        else:
+                            name = "<Unnamed>"
+                        options.append(name)
                     choice = st.selectbox("Select a recipe", options)
                     selected = next(r for r, name in zip(recipes, options) if name == choice)
                     details = fetch_recipe_details(selected.get("id"))
