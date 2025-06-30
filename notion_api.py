@@ -1,6 +1,12 @@
 import os
-from fastapi import FastAPI, HTTPException
+from dotenv import load_dotenv
 from notion_client import Client
+from fastapi import FastAPI, HTTPException
+
+# Load .env into environment
+load_dotenv()
+print("Loaded NOTION_API_TOKEN:", os.getenv("NOTION_API_TOKEN"))
+print("Loaded NOTION_RECIPES_DB_ID:", os.getenv("NOTION_RECIPES_DB_ID"))
 
 app = FastAPI()
 notion = Client(auth=os.getenv("NOTION_API_TOKEN"))
