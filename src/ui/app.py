@@ -41,7 +41,8 @@ class ChefApp:
             'last_answer': '',
             'conversation_history': [],
             'voice_loop_running': False,
-            'current_mode': 'normal'
+            'current_mode': 'normal',
+            'chef_mode': 'normal'  # Track chef personality mode
         }
         
         for key, default_value in defaults.items():
@@ -73,7 +74,7 @@ class ChefApp:
         recipe: str, 
         maintain_history: bool, 
         streaming: bool, 
-        sassy_mode: bool
+        chef_mode: str
     ):
         """Start the voice interaction loop in a background thread."""
         try:
@@ -94,7 +95,9 @@ class ChefApp:
                 max_tokens=self.settings.llm.max_tokens,
                 temperature=self.settings.llm.temperature,
                 sassy_max_tokens=self.settings.llm.sassy_max_tokens,
-                sassy_temperature=self.settings.llm.sassy_temperature
+                sassy_temperature=self.settings.llm.sassy_temperature,
+                gordon_max_tokens=self.settings.llm.gordon_max_tokens,
+                gordon_temperature=self.settings.llm.gordon_temperature
             )
             
             tts = TTSEngine(
@@ -106,7 +109,7 @@ class ChefApp:
             # Initialize conversation history
             history = None
             if maintain_history:
-                system_prompt = get_system_prompt(sassy_mode=sassy_mode)
+                system_prompt = get_system_prompt(chef_mode=chef_mode)
                 history = [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Here is my recipe:\n{recipe}"}
@@ -139,7 +142,7 @@ class ChefApp:
                                 recipe_text=(recipe if history is None else ""),
                                 user_question=user_question,
                                 history=history,
-                                sassy_mode=sassy_mode
+                                chef_mode=chef_mode
                             ),
                             start_threshold=80
                         )
@@ -148,7 +151,7 @@ class ChefApp:
                             recipe_text=(recipe if history is None else ""),
                             user_question=user_question,
                             history=history,
-                            sassy_mode=sassy_mode
+                            chef_mode=chef_mode
                         )
                         # For non-streaming, speak the complete response at once
                         tts.say(response)
@@ -156,11 +159,11 @@ class ChefApp:
                     
                     # Update history
                     if history is not None:
-                        llm.update_history_with_response(history, answer_text, sassy_mode)
+                        llm.update_history_with_response(history, answer_text, chef_mode)
                     
                     # Store response for UI (thread-safe assignment)
                     st.session_state.last_answer = answer_text
-                    st.session_state.current_mode = 'sassy' if sassy_mode else 'normal'
+                    st.session_state.current_mode = chef_mode
                     
                     print(f"🤖 Assistant responded: {answer_text}")
                     
@@ -191,8 +194,12 @@ class ChefApp:
         st.title(f"{self.settings.ui.page_icon} Hey Chef")
         
         # Mode indicator
-        mode_emoji = "😈" if st.session_state.current_mode == 'sassy' else "😊"
-        mode_text = "Sassy Chef Mode" if st.session_state.current_mode == 'sassy' else "Friendly Chef Mode"
+        mode_indicators = {
+            'normal': ("😊", "Friendly Chef Mode"),
+            'sassy': ("😈", "Sassy Chef Mode"),
+            'gordon_ramsay': ("🔥", "Gordon Ramsay Mode")
+        }
+        mode_emoji, mode_text = mode_indicators.get(st.session_state.current_mode, ("😊", "Friendly Chef Mode"))
         
         st.markdown(
             f"""
@@ -220,14 +227,26 @@ class ChefApp:
             
             # Mode selection
             st.subheader("🎭 Chef Personality")
-            sassy_mode = st.checkbox(
-                "Enable Sassy Mode 😈",
-                value=self.settings.ui.default_sassy_mode,
-                help="Get brutally honest, short, and sarcastic responses!"
+            chef_mode = st.radio(
+                "Choose your chef personality:",
+                options=["normal", "sassy", "gordon_ramsay"],
+                format_func=lambda x: {
+                    "normal": "😊 Friendly Chef - Helpful and encouraging",
+                    "sassy": "😈 Sassy Chef - Brutally honest with attitude",
+                    "gordon_ramsay": "🔥 Gordon Ramsay - Explosive Hell's Kitchen mode"
+                }[x],
+                index=0 if not hasattr(st.session_state, 'chef_mode') else ["normal", "sassy", "gordon_ramsay"].index(st.session_state.chef_mode),
+                help="Select the chef personality for your cooking assistant"
             )
             
-            if sassy_mode:
+            # Update session state
+            st.session_state.chef_mode = chef_mode
+            
+            # Mode-specific warnings
+            if chef_mode == "sassy":
                 st.warning("⚠️ Sassy mode enabled! Expect attitude and short responses.")
+            elif chef_mode == "gordon_ramsay":
+                st.error("🔥 WARNING: Gordon Ramsay mode! Prepare for explosive, demanding responses!")
             
             st.divider()
             
@@ -267,9 +286,9 @@ class ChefApp:
                 )
                 
                 if start_button:
-                    return sassy_mode, use_history, use_streaming, True
+                    return chef_mode, use_history, use_streaming, True
             
-            return sassy_mode, use_history, use_streaming, False
+            return chef_mode, use_history, use_streaming, False
     
     def _render_recipe_section(self) -> str:
         """Render the recipe selection section."""
@@ -330,26 +349,46 @@ class ChefApp:
             st.subheader("💬 Last Response")
             
             # Style based on mode
-            if st.session_state.current_mode == 'sassy':
-                st.markdown(
-                    f"""
-                    <div style="background-color: #FFE4E1; padding: 15px; border-radius: 10px; border-left: 4px solid #FF6B6B;">
-                        <strong>Chef Sass says:</strong><br>
-                        <em>"{st.session_state.last_answer}"</em>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
+            mode_styles = {
+                'normal': {
+                    'bg_color': '#F0F8FF',
+                    'border_color': '#4CAF50',
+                    'title': 'Chef Bot says:',
+                    'style': 'normal'
+                },
+                'sassy': {
+                    'bg_color': '#FFE4E1',
+                    'border_color': '#FF6B6B',
+                    'title': 'Chef Sass says:',
+                    'style': 'italic'
+                },
+                'gordon_ramsay': {
+                    'bg_color': '#FFF5EE',
+                    'border_color': '#FF4500',
+                    'title': 'CHEF RAMSAY SHOUTS:',
+                    'style': 'bold'
+                }
+            }
+            
+            current_style = mode_styles.get(st.session_state.current_mode, mode_styles['normal'])
+            
+            # Format the message based on style
+            if current_style['style'] == 'italic':
+                message_format = f'<em>"{st.session_state.last_answer}"</em>'
+            elif current_style['style'] == 'bold':
+                message_format = f'<strong>"{st.session_state.last_answer}"</strong>'
             else:
-                st.markdown(
-                    f"""
-                    <div style="background-color: #F0F8FF; padding: 15px; border-radius: 10px; border-left: 4px solid #4CAF50;">
-                        <strong>Chef Bot says:</strong><br>
-                        "{st.session_state.last_answer}"
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
+                message_format = f'"{st.session_state.last_answer}"'
+            
+            st.markdown(
+                f"""
+                <div style="background-color: {current_style['bg_color']}; padding: 15px; border-radius: 10px; border-left: 4px solid {current_style['border_color']};">
+                    <strong>{current_style['title']}</strong><br>
+                    {message_format}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
             
             if st.button("🗑️ Clear Response"):
                 st.session_state.last_answer = ""
@@ -361,7 +400,7 @@ class ChefApp:
         self._render_header()
         
         # Sidebar controls
-        sassy_mode, use_history, use_streaming, should_start = self._render_sidebar()
+        chef_mode, use_history, use_streaming, should_start = self._render_sidebar()
         
         # Recipe section
         recipe = self._render_recipe_section()
@@ -377,7 +416,7 @@ class ChefApp:
                 # Start voice loop in background thread
                 self.voice_loop_thread = threading.Thread(
                     target=self._start_voice_loop,
-                    args=(recipe, use_history, use_streaming, sassy_mode),
+                    args=(recipe, use_history, use_streaming, chef_mode),
                     daemon=True
                 )
                 self.voice_loop_thread.start()
