@@ -9,6 +9,7 @@ import streamlit as st
 import threading
 from typing import Optional, Dict, Any
 from pathlib import Path
+import requests
 
 # Silence Streamlit warnings
 warnings.filterwarnings(
@@ -22,6 +23,76 @@ from ..audio import WakeWordDetector, WhisperSTT, TTSEngine
 from ..ai import LLMClient
 from ..config import Settings, get_system_prompt
 
+API_URL = os.getenv("RECIPE_API_URL", "http://localhost:3333")
+
+def fetch_recipes():
+    resp = requests.get(f"{API_URL}/recipes")
+    resp.raise_for_status()
+    return resp.json().get("recipes", [])
+
+def fetch_recipe_details(recipe_id):
+    resp = requests.get(f"{API_URL}/recipes/{recipe_id}")
+    resp.raise_for_status()
+    return resp.json()
+
+def format_notion_recipe(details):
+    md = ""
+    props = details.get("properties", {})
+    for k, v in props.items():
+        if v.get("type") == "title":
+            title = "".join(t.get("plain_text", "") for t in v.get("title", []))
+            md += f"## {title}\n\n"
+        elif v.get("type") == "rich_text":
+            text = "".join(t.get("plain_text", "") for t in v.get("rich_text", []))
+            md += f"**{k}:** {text}\n\n"
+        elif v.get("type") == "number":
+            md += f"**{k}:** {v.get('number')}\n\n"
+        elif v.get("type") == "select" and v.get("select"):
+            md += f"**{k}:** {v['select'].get('name')}\n\n"
+        elif v.get("type") == "multi_select":
+            names = [opt.get("name") for opt in v.get("multi_select", [])]
+            md += f"**{k}:** {', '.join(names)}\n\n"
+        elif v.get("type") == "date" and v.get("date"):
+            start = v['date'].get('start')
+            end = v['date'].get('end')
+            md += f"**{k}:** {start}" + (f" to {end}" if end else "") + "\n\n"
+        elif v.get("type") == "people":
+            names = [p.get('name') for p in v.get('people', [])]
+            md += f"**{k}:** {', '.join(names)}\n\n"
+        elif v.get("type") == "checkbox":
+            md += f"**{k}:** {'Yes' if v.get('checkbox') else 'No'}\n\n"
+        elif v.get("type") in ('url', 'email', 'phone_number'):
+            val = v.get(v['type'])
+            md += f"**{k}:** {val}\n\n"
+
+    def render_blocks(blocks):
+        text = ""
+        for b in blocks:
+            t = b.get("type")
+            data = b.get(t, {})
+            if t == "paragraph":
+                text += "".join(rt.get("plain_text", "") for rt in data.get("rich_text", [])) + "\n\n"
+            elif t in ("heading_1", "heading_2", "heading_3"):
+                level = {"heading_1": "#", "heading_2": "##", "heading_3": "###"}[t]
+                text += level + " " + "".join(rt.get("plain_text", "") for rt in data.get("rich_text", [])) + "\n\n"
+            elif t in ("bulleted_list_item", "numbered_list_item"):
+                prefix = "- " if t == "bulleted_list_item" else "1. "
+                text += prefix + "".join(rt.get("plain_text", "") for rt in data.get("rich_text", [])) + "\n"
+            elif t == "code":
+                lang = data.get("language", "")
+                code = data.get("rich_text", [])
+                text += "```" + lang + "\n" + (code[0].get("plain_text", "") if code else "") + "\n```\n\n"
+            elif t == "image":
+                url = data.get("file", {}).get("url") or data.get("external", {}).get("url", "")
+                caption = "".join(rt.get("plain_text", "") for rt in data.get("caption", []))
+                text += f"![{caption}]({url})\n\n"
+            if b.get('children'):
+                text += render_blocks(b['children'])
+        return text
+
+    content = render_blocks(details.get('content', []))
+    md += content
+    return md
 
 class ChefApp:
     """Main Hey Chef application class."""
@@ -290,9 +361,13 @@ class ChefApp:
         col1, col2 = st.columns([3, 1])
         
         with col1:
-            use_default = st.checkbox("Use default recipe", value=True)
-            
-            if use_default:
+            source = st.radio(
+                "Recipe source",
+                ("Default", "Notion DB", "Custom"),
+                index=0
+            )
+
+            if source == "Default":
                 default_recipe = self._load_default_recipe()
                 if default_recipe:
                     with st.expander("👀 View default recipe"):
@@ -300,29 +375,56 @@ class ChefApp:
                     return default_recipe
                 else:
                     st.error("❌ No default recipe found")
-                    use_default = False
-            
-            if not use_default:
+                    source = "Notion DB"
+
+            if source == "Notion DB":
+                st.write("Fetching recipes from Notion...")
+                try:
+                    recipes = fetch_recipes()
+                    # Extract recipe names from title property for each recipe
+                    options = []
+                    for r in recipes:
+                        props = r.get("properties", {})
+                        # Find the title property (type "title")
+                        title_prop = None
+                        for prop in props.values():
+                            if prop.get("type") == "title":
+                                title_prop = prop
+                                break
+                        if title_prop and title_prop.get("title"):
+                            name = next((t.get("plain_text") for t in title_prop["title"] if t.get("plain_text")), "<Unnamed>")
+                        else:
+                            name = "<Unnamed>"
+                        options.append(name)
+                    choice = st.selectbox("Select a recipe", options)
+                    selected = next(r for r, name in zip(recipes, options) if name == choice)
+                    details = fetch_recipe_details(selected.get("id"))
+                    content_md = format_notion_recipe(details)
+                    with st.expander("👀 View selected recipe"):
+                        st.markdown(content_md)
+                    return content_md
+                except Exception as e:
+                    st.error(f"❌ Failed to load recipes: {e}")
+                    source = "Custom"
+
+            if source == "Custom":
                 recipe_input = st.text_area(
                     label="Custom recipe (plain text or markdown):",
                     value=st.session_state.custom_recipe,
                     height=300,
                     placeholder="Enter your recipe here..."
                 )
-                
                 col_save, col_clear = st.columns(2)
                 with col_save:
                     if st.button("💾 Save Recipe", type="secondary"):
                         st.session_state.custom_recipe = recipe_input
                         st.success("✅ Custom recipe saved!")
-                
                 with col_clear:
                     if st.button("🗑️ Clear Recipe", type="secondary"):
                         st.session_state.custom_recipe = ""
                         st.rerun()
-                
                 return recipe_input
-        
+
         with col2:
             st.info(
                 """
@@ -333,7 +435,7 @@ class ChefApp:
                 - Use clear, simple language
                 """
             )
-        
+
         return ""
     
     def _render_last_response(self):

@@ -219,6 +219,36 @@ This project is open source. Feel free to contribute!
 - OpenAI Whisper for speech recognition
 - Streamlit for the web interface
 
+## 🔐 Per-Repo SSH Configuration
+
+If you'd like this repository to always use your `jamesdowzard` GitHub account, follow these steps:
+
+1. Ensure you have a dedicated SSH key (e.g. `~/.ssh/id_ed25519_jamesdowzard`) added to your GitHub account.
+2. Add the following to your `~/.ssh/config` (if not already present):
+
+   ```ssh-config
+   Host github-jamesdowzard
+     HostName github.com
+     User git
+     IdentityFile ~/.ssh/id_ed25519_jamesdowzard
+     IdentitiesOnly yes
+   ```
+3. Make the setup script executable and run it:
+   ```bash
+   chmod +x setup_jamesdowzard_ssh.sh
+   ./setup_jamesdowzard_ssh.sh
+   ```
+   This updates your `origin` remote to:
+
+   ```
+   git@github-jamesdowzard:jamesdowzard/hey_chef.git
+   ```
+4. Push and create pull requests as usual:
+   ```bash
+   git push -u origin <branch-name>
+   gh pr create --repo jamesdowzard/hey_chef --head <branch-name> --fill
+   ```
+
 ---
 
 **Enjoy cooking with your new sassy (or friendly) AI sous chef!** 🍳✨ 

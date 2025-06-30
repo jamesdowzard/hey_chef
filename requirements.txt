@@ -10,3 +10,6 @@ pyyaml
 sounddevice
 webrtcvad
 openai-whisper
+fastapi
+uvicorn[standard]
+notion-client
