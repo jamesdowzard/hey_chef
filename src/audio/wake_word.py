@@ -35,6 +35,8 @@ class WakeWordDetector:
         self.porcupine: Optional[pvporcupine.Porcupine] = None
         self.pa: Optional[pyaudio.PyAudio] = None
         self.stream: Optional[pyaudio.Stream] = None
+        # Optional external event to interrupt detection
+        self.stop_event = None
         
         try:
             # Create Porcupine instance
@@ -63,6 +65,7 @@ class WakeWordDetector:
         
         Returns:
             True when wake word is detected
+            False if stopped before detection
             
         Raises:
             RuntimeError: If detection fails
@@ -74,6 +77,9 @@ class WakeWordDetector:
         
         try:
             while True:
+                # Exit early if stop_event is set
+                if self.stop_event and self.stop_event.is_set():
+                    return False
                 pcm = self.stream.read(
                     self.porcupine.frame_length, 
                     exception_on_overflow=False

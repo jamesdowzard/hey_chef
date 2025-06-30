@@ -100,8 +100,13 @@ class ChefApp:
     def __init__(self):
         """Initialize the application."""
         self.settings = Settings()
-        self.voice_loop_event = threading.Event()  # Thread-safe control
-        self.voice_loop_thread = None
+        # Use persistent event and thread from session state for voice loop
+        if 'voice_loop_event' not in st.session_state:
+            st.session_state.voice_loop_event = threading.Event()
+        if 'voice_loop_thread' not in st.session_state:
+            st.session_state.voice_loop_thread = None
+        self.voice_loop_event = st.session_state.voice_loop_event
+        self.voice_loop_thread = st.session_state.voice_loop_thread
         self._init_session_state()
         self._setup_page()
     
@@ -157,6 +162,8 @@ class ChefApp:
                 keyword_path=self.settings.get_wake_word_path(),
                 sensitivity=self.settings.audio.wake_word_sensitivity
             )
+            # Allow wake-word detection to be interrupted
+            wwd.stop_event = self.voice_loop_event
             
             stt = WhisperSTT(
                 model_size=self.settings.audio.whisper_model_size,
@@ -194,8 +201,10 @@ class ChefApp:
             # Main voice loop - use threading.Event for control
             while not self.voice_loop_event.is_set():
                 try:
-                    # Wait for wake word
-                    wwd.detect_once()
+                    # Wait for wake word (returns False if stopped)
+                    detected = wwd.detect_once()
+                    if not detected:
+                        break
                     
                     # Record user speech
                     wav_path = stt.record_until_silence()
@@ -265,6 +274,7 @@ class ChefApp:
             
             # Update UI state
             st.session_state.voice_loop_running = False
+            st.session_state.voice_loop_thread = None  # Clear thread reference
     
     def _stop_audio_processes(self):
         """Kill any running TTS audio processes."""
@@ -364,6 +374,7 @@ class ChefApp:
                     if self.voice_loop_thread and self.voice_loop_thread.is_alive():
                         self.voice_loop_thread.join(timeout=2)  # Wait for thread to finish
                     self._stop_audio_processes()  # Kill any playing audio
+                    st.session_state.voice_loop_thread = None  # Clear thread reference
                     st.session_state.voice_loop_running = False
                     st.rerun()
             
@@ -544,6 +555,7 @@ class ChefApp:
             if self.voice_loop_thread and self.voice_loop_thread.is_alive():
                 self.voice_loop_thread.join(timeout=2)
             self._stop_audio_processes()
+            st.session_state.voice_loop_thread = None  # Clear thread reference
             st.session_state.voice_loop_running = False
             st.rerun()
         should_start = start_main
@@ -571,6 +583,7 @@ class ChefApp:
                     daemon=True
                 )
                 self.voice_loop_thread.start()
+                st.session_state.voice_loop_thread = self.voice_loop_thread  # Persist thread
                 
                 st.success("🔊 Voice assistant started! Say 'Hey Chef' and ask your question.")
                 st.rerun()
