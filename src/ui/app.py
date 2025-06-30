@@ -113,7 +113,8 @@ class ChefApp:
             'conversation_history': [],
             'voice_loop_running': False,
             'current_mode': 'normal',
-            'chef_mode': 'normal'  # Track chef personality mode
+            'chef_mode': 'normal',  # Track chef personality mode
+            'selected_recipe': ''
         }
         
         for key, default_value in defaults.items():
@@ -504,14 +505,19 @@ class ChefApp:
                 start_main = True
         should_start = start_main
 
-        # Recipe section
-        recipe = self._render_recipe_section()
+        # Recipe section (cached during active voice loop to avoid repeated GETs)
+        if st.session_state.voice_loop_running:
+            recipe = st.session_state.selected_recipe
+        else:
+            recipe = self._render_recipe_section()
         
         # Handle voice loop start
         if should_start:
             if not recipe.strip():
                 st.error("❌ Please select or enter a recipe before starting.")
             else:
+                # Cache selected recipe to avoid re-fetch on reruns
+                st.session_state.selected_recipe = recipe
                 st.session_state.voice_loop_running = True
                 self.voice_loop_event.clear()  # Clear the stop event
                 
