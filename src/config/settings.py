@@ -21,13 +21,18 @@ class AudioSettings:
 @dataclass
 class LLMSettings:
     """LLM-related settings"""
-    model: str = "gpt-4o"
+    model: str = "gpt-4-turbo"
+    available_models: list = None
     max_tokens: int = 150
     temperature: float = 0.2
     sassy_max_tokens: int = 100  # Shorter responses for sassy mode
     sassy_temperature: float = 0.7  # More creative for sassy mode
     gordon_max_tokens: int = 180  # Longer explosive responses for Gordon mode (1.5x increase)
     gordon_temperature: float = 0.8  # High creativity for explosive personality
+    
+    def __post_init__(self):
+        if self.available_models is None:
+            self.available_models = ["gpt-4-turbo", "gpt-4o"]
 
 
 @dataclass

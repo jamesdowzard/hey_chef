@@ -157,7 +157,8 @@ class ChefApp:
         recipe: str, 
         maintain_history: bool, 
         streaming: bool, 
-        chef_mode: str
+        chef_mode: str,
+        model: str
     ):
         """Start the voice interaction loop in a background thread."""
         try:
@@ -176,7 +177,7 @@ class ChefApp:
             )
             
             llm = LLMClient(
-                model=self.settings.llm.model,
+                model=model,
                 max_tokens=self.settings.llm.max_tokens,
                 temperature=self.settings.llm.temperature,
                 sassy_max_tokens=self.settings.llm.sassy_max_tokens,
@@ -326,6 +327,17 @@ class ChefApp:
         with st.sidebar:
             st.header("⚙️ Settings")
             
+            # Model selection
+            st.subheader("🤖 AI Model")
+            selected_model = st.selectbox(
+                "Choose GPT Model",
+                options=self.settings.llm.available_models,
+                index=self.settings.llm.available_models.index(self.settings.llm.model),
+                help="Select which OpenAI model to use"
+            )
+            
+            st.divider()
+            
             # Mode selection
             st.subheader("🎭 Chef Personality")
             chef_mode = st.radio(
@@ -383,7 +395,7 @@ class ChefApp:
                     st.rerun()
             
             # Always return False for sidebar start; starting handled on main page
-            return chef_mode, use_history, use_streaming, False
+            return selected_model, chef_mode, use_history, use_streaming, False
     
     def _render_recipe_section(self) -> str:
         """Render the recipe selection section."""
@@ -536,7 +548,7 @@ class ChefApp:
     def run(self):
         """Main application entry point."""
         # Sidebar controls (update mode; no start here)
-        chef_mode, use_history, use_streaming, _ = self._render_sidebar()
+        selected_model, chef_mode, use_history, use_streaming, _ = self._render_sidebar()
 
         # Render header after mode is set
         self._render_header()
@@ -583,7 +595,7 @@ class ChefApp:
                 # Start voice loop in background thread
                 self.voice_loop_thread = threading.Thread(
                     target=self._start_voice_loop,
-                    args=(recipe, use_history, use_streaming, chef_mode),
+                    args=(recipe, use_history, use_streaming, chef_mode, selected_model),
                     daemon=True
                 )
                 self.voice_loop_thread.start()
