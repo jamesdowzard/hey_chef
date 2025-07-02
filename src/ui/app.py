@@ -15,8 +15,12 @@ import requests
 warnings.filterwarnings(
     "ignore",
     message=".*missing ScriptRunContext.*",
-    category=UserWarning,
-    module="streamlit.runtime.scriptrunner"
+    category=UserWarning
+)
+warnings.filterwarnings(
+    "ignore",
+    message=".*This warning can be ignored when running in bare mode.*",
+    category=UserWarning
 )
 
 from ..audio import WakeWordDetector, WhisperSTT, TTSEngine
