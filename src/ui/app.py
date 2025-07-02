@@ -9,19 +9,94 @@ import streamlit as st
 import threading
 from typing import Optional, Dict, Any
 from pathlib import Path
+import requests
 
 # Silence Streamlit warnings
 warnings.filterwarnings(
     "ignore",
     message=".*missing ScriptRunContext.*",
-    category=UserWarning,
-    module="streamlit.runtime.scriptrunner"
+    category=UserWarning
+)
+warnings.filterwarnings(
+    "ignore",
+    message=".*This warning can be ignored when running in bare mode.*",
+    category=UserWarning
 )
 
 from ..audio import WakeWordDetector, WhisperSTT, TTSEngine
 from ..ai import LLMClient
 from ..config import Settings, get_system_prompt
 
+API_URL = os.getenv("RECIPE_API_URL", "http://localhost:3333")
+
+def fetch_recipes():
+    resp = requests.get(f"{API_URL}/recipes")
+    resp.raise_for_status()
+    return resp.json().get("recipes", [])
+
+def fetch_recipe_details(recipe_id):
+    resp = requests.get(f"{API_URL}/recipes/{recipe_id}")
+    resp.raise_for_status()
+    return resp.json()
+
+def format_notion_recipe(details):
+    md = ""
+    props = details.get("properties", {})
+    for k, v in props.items():
+        if v.get("type") == "title":
+            title = "".join(t.get("plain_text", "") for t in v.get("title", []))
+            md += f"## {title}\n\n"
+        elif v.get("type") == "rich_text":
+            text = "".join(t.get("plain_text", "") for t in v.get("rich_text", []))
+            md += f"**{k}:** {text}\n\n"
+        elif v.get("type") == "number":
+            md += f"**{k}:** {v.get('number')}\n\n"
+        elif v.get("type") == "select" and v.get("select"):
+            md += f"**{k}:** {v['select'].get('name')}\n\n"
+        elif v.get("type") == "multi_select":
+            names = [opt.get("name") for opt in v.get("multi_select", [])]
+            md += f"**{k}:** {', '.join(names)}\n\n"
+        elif v.get("type") == "date" and v.get("date"):
+            start = v['date'].get('start')
+            end = v['date'].get('end')
+            md += f"**{k}:** {start}" + (f" to {end}" if end else "") + "\n\n"
+        elif v.get("type") == "people":
+            names = [p.get('name') for p in v.get('people', [])]
+            md += f"**{k}:** {', '.join(names)}\n\n"
+        elif v.get("type") == "checkbox":
+            md += f"**{k}:** {'Yes' if v.get('checkbox') else 'No'}\n\n"
+        elif v.get("type") in ('url', 'email', 'phone_number'):
+            val = v.get(v['type'])
+            md += f"**{k}:** {val}\n\n"
+
+    def render_blocks(blocks):
+        text = ""
+        for b in blocks:
+            t = b.get("type")
+            data = b.get(t, {})
+            if t == "paragraph":
+                text += "".join(rt.get("plain_text", "") for rt in data.get("rich_text", [])) + "\n\n"
+            elif t in ("heading_1", "heading_2", "heading_3"):
+                level = {"heading_1": "#", "heading_2": "##", "heading_3": "###"}[t]
+                text += level + " " + "".join(rt.get("plain_text", "") for rt in data.get("rich_text", [])) + "\n\n"
+            elif t in ("bulleted_list_item", "numbered_list_item"):
+                prefix = "- " if t == "bulleted_list_item" else "1. "
+                text += prefix + "".join(rt.get("plain_text", "") for rt in data.get("rich_text", [])) + "\n"
+            elif t == "code":
+                lang = data.get("language", "")
+                code = data.get("rich_text", [])
+                text += "```" + lang + "\n" + (code[0].get("plain_text", "") if code else "") + "\n```\n\n"
+            elif t == "image":
+                url = data.get("file", {}).get("url") or data.get("external", {}).get("url", "")
+                caption = "".join(rt.get("plain_text", "") for rt in data.get("caption", []))
+                text += f"![{caption}]({url})\n\n"
+            if b.get('children'):
+                text += render_blocks(b['children'])
+        return text
+
+    content = render_blocks(details.get('content', []))
+    md += content
+    return md
 
 class ChefApp:
     """Main Hey Chef application class."""
@@ -29,8 +104,13 @@ class ChefApp:
     def __init__(self):
         """Initialize the application."""
         self.settings = Settings()
-        self.voice_loop_event = threading.Event()  # Thread-safe control
-        self.voice_loop_thread = None
+        # Use persistent event and thread from session state for voice loop
+        if 'voice_loop_event' not in st.session_state:
+            st.session_state.voice_loop_event = threading.Event()
+        if 'voice_loop_thread' not in st.session_state:
+            st.session_state.voice_loop_thread = None
+        self.voice_loop_event = st.session_state.voice_loop_event
+        self.voice_loop_thread = st.session_state.voice_loop_thread
         self._init_session_state()
         self._setup_page()
     
@@ -41,7 +121,11 @@ class ChefApp:
             'last_answer': '',
             'conversation_history': [],
             'voice_loop_running': False,
-            'current_mode': 'normal'
+            'current_mode': 'normal',
+            'chef_mode': 'normal',  # Track chef personality mode
+            'selected_recipe': '',
+            'selected_source': 'Default',
+            'selected_notion_choice_index': 0
         }
         
         for key, default_value in defaults.items():
@@ -53,7 +137,7 @@ class ChefApp:
         st.set_page_config(
             page_title=self.settings.ui.page_title,
             page_icon=self.settings.ui.page_icon,
-            layout=self.settings.ui.layout
+            layout="wide"
         )
     
     def _load_default_recipe(self) -> str:
@@ -73,7 +157,7 @@ class ChefApp:
         recipe: str, 
         maintain_history: bool, 
         streaming: bool, 
-        sassy_mode: bool
+        chef_mode: str
     ):
         """Start the voice interaction loop in a background thread."""
         try:
@@ -82,6 +166,8 @@ class ChefApp:
                 keyword_path=self.settings.get_wake_word_path(),
                 sensitivity=self.settings.audio.wake_word_sensitivity
             )
+            # Allow wake-word detection to be interrupted
+            wwd.stop_event = self.voice_loop_event
             
             stt = WhisperSTT(
                 model_size=self.settings.audio.whisper_model_size,
@@ -94,7 +180,9 @@ class ChefApp:
                 max_tokens=self.settings.llm.max_tokens,
                 temperature=self.settings.llm.temperature,
                 sassy_max_tokens=self.settings.llm.sassy_max_tokens,
-                sassy_temperature=self.settings.llm.sassy_temperature
+                sassy_temperature=self.settings.llm.sassy_temperature,
+                gordon_max_tokens=self.settings.llm.gordon_max_tokens,
+                gordon_temperature=self.settings.llm.gordon_temperature
             )
             
             tts = TTSEngine(
@@ -106,7 +194,7 @@ class ChefApp:
             # Initialize conversation history
             history = None
             if maintain_history:
-                system_prompt = get_system_prompt(sassy_mode=sassy_mode)
+                system_prompt = get_system_prompt(chef_mode=chef_mode)
                 history = [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"Here is my recipe:\n{recipe}"}
@@ -117,8 +205,10 @@ class ChefApp:
             # Main voice loop - use threading.Event for control
             while not self.voice_loop_event.is_set():
                 try:
-                    # Wait for wake word
-                    wwd.detect_once()
+                    # Wait for wake word (returns False if stopped)
+                    detected = wwd.detect_once()
+                    if not detected:
+                        break
                     
                     # Record user speech
                     wav_path = stt.record_until_silence()
@@ -139,7 +229,7 @@ class ChefApp:
                                 recipe_text=(recipe if history is None else ""),
                                 user_question=user_question,
                                 history=history,
-                                sassy_mode=sassy_mode
+                                chef_mode=chef_mode
                             ),
                             start_threshold=80
                         )
@@ -148,7 +238,7 @@ class ChefApp:
                             recipe_text=(recipe if history is None else ""),
                             user_question=user_question,
                             history=history,
-                            sassy_mode=sassy_mode
+                            chef_mode=chef_mode
                         )
                         # For non-streaming, speak the complete response at once
                         tts.say(response)
@@ -156,11 +246,11 @@ class ChefApp:
                     
                     # Update history
                     if history is not None:
-                        llm.update_history_with_response(history, answer_text, sassy_mode)
+                        llm.update_history_with_response(history, answer_text, chef_mode)
                     
                     # Store response for UI (thread-safe assignment)
                     st.session_state.last_answer = answer_text
-                    st.session_state.current_mode = 'sassy' if sassy_mode else 'normal'
+                    st.session_state.current_mode = chef_mode
                     
                     print(f"🤖 Assistant responded: {answer_text}")
                     
@@ -182,17 +272,35 @@ class ChefApp:
                     wwd.cleanup()
             except:
                 pass
+
+            # Kill any playing audio processes
+            self._stop_audio_processes()
             
             # Update UI state
             st.session_state.voice_loop_running = False
+            st.session_state.voice_loop_thread = None  # Clear thread reference
     
+    def _stop_audio_processes(self):
+        """Kill any running TTS audio processes."""
+        import subprocess
+        for proc in ["afplay", "play", "say"]:
+            try:
+                subprocess.run(["pkill", proc], check=False)
+            except Exception as e:
+                print(f"⚠️ Failed to kill audio process {proc}: {e}")
+
     def _render_header(self):
         """Render the application header."""
         st.title(f"{self.settings.ui.page_icon} Hey Chef")
         
         # Mode indicator
-        mode_emoji = "😈" if st.session_state.current_mode == 'sassy' else "😊"
-        mode_text = "Sassy Chef Mode" if st.session_state.current_mode == 'sassy' else "Friendly Chef Mode"
+        mode_indicators = {
+            'normal': ("😊", "Friendly Chef Mode"),
+            'sassy': ("😈", "Sassy Chef Mode"),
+            'gordon_ramsay': ("🔥", "Gordon Ramsay Mode")
+        }
+        selected_mode = st.session_state.chef_mode  
+        mode_emoji, mode_text = mode_indicators.get(selected_mode, ("😊", "Friendly Chef Mode"))
         
         st.markdown(
             f"""
@@ -220,14 +328,26 @@ class ChefApp:
             
             # Mode selection
             st.subheader("🎭 Chef Personality")
-            sassy_mode = st.checkbox(
-                "Enable Sassy Mode 😈",
-                value=self.settings.ui.default_sassy_mode,
-                help="Get brutally honest, short, and sarcastic responses!"
+            chef_mode = st.radio(
+                "Choose your chef personality:",
+                options=["normal", "sassy", "gordon_ramsay"],
+                format_func=lambda x: {
+                    "normal": "😊 Friendly Chef - Helpful and encouraging",
+                    "sassy": "😈 Sassy Chef - Brutally honest with attitude",
+                    "gordon_ramsay": "🔥 Gordon Ramsay - Explosive Hell's Kitchen mode"
+                }[x],
+                index=0 if not hasattr(st.session_state, 'chef_mode') else ["normal", "sassy", "gordon_ramsay"].index(st.session_state.chef_mode),
+                help="Select the chef personality for your cooking assistant"
             )
             
-            if sassy_mode:
+            # Update session state
+            st.session_state.chef_mode = chef_mode
+            
+            # Mode-specific warnings
+            if chef_mode == "sassy":
                 st.warning("⚠️ Sassy mode enabled! Expect attitude and short responses.")
+            elif chef_mode == "gordon_ramsay":
+                st.error("🔥 WARNING: Gordon Ramsay mode! Prepare for explosive, demanding responses!")
             
             st.divider()
             
@@ -250,37 +370,45 @@ class ChefApp:
             # Voice controls
             st.subheader("🎤 Voice Control")
             
-            # Status indicator
+            # Show status and Stop option
             if st.session_state.voice_loop_running:
                 st.success("🟢 Listening for 'Hey Chef'...")
                 if st.button("🛑 Stop Listening", type="secondary"):
                     self.voice_loop_event.set()  # Signal thread to stop
                     if self.voice_loop_thread and self.voice_loop_thread.is_alive():
                         self.voice_loop_thread.join(timeout=2)  # Wait for thread to finish
+                    self._stop_audio_processes()  # Kill any playing audio
+                    st.session_state.voice_loop_thread = None  # Clear thread reference
                     st.session_state.voice_loop_running = False
                     st.rerun()
-            else:
-                start_button = st.button(
-                    "🎤 Start Listening", 
-                    type="primary",
-                    help="Start voice interaction"
-                )
-                
-                if start_button:
-                    return sassy_mode, use_history, use_streaming, True
             
-            return sassy_mode, use_history, use_streaming, False
+            # Always return False for sidebar start; starting handled on main page
+            return chef_mode, use_history, use_streaming, False
     
     def _render_recipe_section(self) -> str:
         """Render the recipe selection section."""
         st.subheader("📝 Recipe Selection")
         
-        col1, col2 = st.columns([3, 1])
+        col1, col2 = st.columns([5, 1])
         
         with col1:
-            use_default = st.checkbox("Use default recipe", value=True)
-            
-            if use_default:
+            # Persist selected recipe source between reruns
+            sources = ["Default", "Notion DB", "Custom"]
+            default_index = sources.index(st.session_state.selected_source) if st.session_state.selected_source in sources else 0
+            source = st.radio(
+                "Recipe source",
+                sources,
+                index=default_index,
+                format_func=lambda x: {
+                    "Default": "📄 Default",
+                    "Notion DB": "🗂️ Notion DB",
+                    "Custom": "✏️ Custom"
+                }[x],
+                horizontal=True
+            )
+            st.session_state.selected_source = source
+
+            if source == "Default":
                 default_recipe = self._load_default_recipe()
                 if default_recipe:
                     with st.expander("👀 View default recipe"):
@@ -288,29 +416,59 @@ class ChefApp:
                     return default_recipe
                 else:
                     st.error("❌ No default recipe found")
-                    use_default = False
-            
-            if not use_default:
+                    source = "Notion DB"
+
+            if source == "Notion DB":
+                st.write("Fetching recipes from Notion...")
+                try:
+                    recipes = fetch_recipes()
+                    # Extract recipe names from title property for each recipe
+                    options = []
+                    for r in recipes:
+                        props = r.get("properties", {})
+                        # Find the title property (type "title")
+                        title_prop = None
+                        for prop in props.values():
+                            if prop.get("type") == "title":
+                                title_prop = prop
+                                break
+                        if title_prop and title_prop.get("title"):
+                            name = next((t.get("plain_text") for t in title_prop["title"] if t.get("plain_text")), "<Unnamed>")
+                        else:
+                            name = "<Unnamed>"
+                        options.append(name)
+                    # Persist selected Notion recipe choice index
+                    default_notion_index = st.session_state.selected_notion_choice_index if 0 <= st.session_state.selected_notion_choice_index < len(options) else 0
+                    choice = st.selectbox("Select a recipe", options, index=default_notion_index)
+                    st.session_state.selected_notion_choice_index = options.index(choice)
+                    selected = next(r for r, name in zip(recipes, options) if name == choice)
+                    details = fetch_recipe_details(selected.get("id"))
+                    content_md = format_notion_recipe(details)
+                    with st.expander("👀 View selected recipe"):
+                        st.markdown(content_md)
+                    return content_md
+                except Exception as e:
+                    st.error(f"❌ Failed to load recipes: {e}")
+                    source = "Custom"
+
+            if source == "Custom":
                 recipe_input = st.text_area(
                     label="Custom recipe (plain text or markdown):",
                     value=st.session_state.custom_recipe,
                     height=300,
                     placeholder="Enter your recipe here..."
                 )
-                
                 col_save, col_clear = st.columns(2)
                 with col_save:
                     if st.button("💾 Save Recipe", type="secondary"):
                         st.session_state.custom_recipe = recipe_input
                         st.success("✅ Custom recipe saved!")
-                
                 with col_clear:
                     if st.button("🗑️ Clear Recipe", type="secondary"):
                         st.session_state.custom_recipe = ""
                         st.rerun()
-                
                 return recipe_input
-        
+
         with col2:
             st.info(
                 """
@@ -321,7 +479,7 @@ class ChefApp:
                 - Use clear, simple language
                 """
             )
-        
+
         return ""
     
     def _render_last_response(self):
@@ -330,26 +488,46 @@ class ChefApp:
             st.subheader("💬 Last Response")
             
             # Style based on mode
-            if st.session_state.current_mode == 'sassy':
-                st.markdown(
-                    f"""
-                    <div style="background-color: #FFE4E1; padding: 15px; border-radius: 10px; border-left: 4px solid #FF6B6B;">
-                        <strong>Chef Sass says:</strong><br>
-                        <em>"{st.session_state.last_answer}"</em>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
+            mode_styles = {
+                'normal': {
+                    'bg_color': '#F0F8FF',
+                    'border_color': '#4CAF50',
+                    'title': 'Chef Bot says:',
+                    'style': 'normal'
+                },
+                'sassy': {
+                    'bg_color': '#FFE4E1',
+                    'border_color': '#FF6B6B',
+                    'title': 'Chef Sass says:',
+                    'style': 'italic'
+                },
+                'gordon_ramsay': {
+                    'bg_color': '#FFF5EE',
+                    'border_color': '#FF4500',
+                    'title': 'CHEF RAMSAY SHOUTS:',
+                    'style': 'bold'
+                }
+            }
+            
+            current_style = mode_styles.get(st.session_state.current_mode, mode_styles['normal'])
+            
+            # Format the message based on style
+            if current_style['style'] == 'italic':
+                message_format = f'<em>"{st.session_state.last_answer}"</em>'
+            elif current_style['style'] == 'bold':
+                message_format = f'<strong>"{st.session_state.last_answer}"</strong>'
             else:
-                st.markdown(
-                    f"""
-                    <div style="background-color: #F0F8FF; padding: 15px; border-radius: 10px; border-left: 4px solid #4CAF50;">
-                        <strong>Chef Bot says:</strong><br>
-                        "{st.session_state.last_answer}"
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
+                message_format = f'"{st.session_state.last_answer}"'
+            
+            st.markdown(
+                f"""
+                <div style="background-color: {current_style['bg_color']}; padding: 15px; border-radius: 10px; border-left: 4px solid {current_style['border_color']};">
+                    <strong>{current_style['title']}</strong><br>
+                    {message_format}
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
             
             if st.button("🗑️ Clear Response"):
                 st.session_state.last_answer = ""
@@ -357,30 +535,59 @@ class ChefApp:
     
     def run(self):
         """Main application entry point."""
-        # Render UI components
+        # Sidebar controls (update mode; no start here)
+        chef_mode, use_history, use_streaming, _ = self._render_sidebar()
+
+        # Render header after mode is set
         self._render_header()
-        
-        # Sidebar controls
-        sassy_mode, use_history, use_streaming, should_start = self._render_sidebar()
-        
-        # Recipe section
-        recipe = self._render_recipe_section()
+
+        # Main page voice controls (start/stop and status)
+        start_main = False
+        stop_requested = False
+        col_ctrl1, col_ctrl2 = st.columns([1, 3])
+        if st.session_state.voice_loop_running:
+            col_ctrl2.write("")  # placeholder for spacing
+            st.success("🟢 Listening for 'Hey Chef'...")
+            if col_ctrl1.button("🛑 Stop Listening", key="main_stop_listening", type="secondary"):
+                stop_requested = True
+        else:
+            if col_ctrl1.button("🎤 Start Listening", key="main_start_listening", type="primary", help="Start voice interaction"):
+                start_main = True
+        # Handle stop action immediately
+        if stop_requested:
+            self.voice_loop_event.set()
+            if self.voice_loop_thread and self.voice_loop_thread.is_alive():
+                self.voice_loop_thread.join(timeout=2)
+            self._stop_audio_processes()
+            st.session_state.voice_loop_thread = None  # Clear thread reference
+            st.session_state.voice_loop_running = False
+            st.rerun()
+        should_start = start_main
+
+        # Recipe section (cached during active voice loop to avoid repeated GETs)
+        if st.session_state.voice_loop_running:
+            recipe = st.session_state.selected_recipe
+        else:
+            recipe = self._render_recipe_section()
         
         # Handle voice loop start
         if should_start:
             if not recipe.strip():
                 st.error("❌ Please select or enter a recipe before starting.")
             else:
+                # Cache selected recipe to avoid re-fetch on reruns
+                st.session_state.selected_recipe = recipe
                 st.session_state.voice_loop_running = True
                 self.voice_loop_event.clear()  # Clear the stop event
                 
                 # Start voice loop in background thread
                 self.voice_loop_thread = threading.Thread(
                     target=self._start_voice_loop,
-                    args=(recipe, use_history, use_streaming, sassy_mode),
+                    args=(recipe, use_history, use_streaming, chef_mode),
                     daemon=True
                 )
                 self.voice_loop_thread.start()
+                st.session_state.voice_loop_thread = self.voice_loop_thread  # Persist thread
                 
                 st.success("🔊 Voice assistant started! Say 'Hey Chef' and ask your question.")
                 st.rerun()

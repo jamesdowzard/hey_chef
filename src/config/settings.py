@@ -26,6 +26,8 @@ class LLMSettings:
     temperature: float = 0.2
     sassy_max_tokens: int = 100  # Shorter responses for sassy mode
     sassy_temperature: float = 0.7  # More creative for sassy mode
+    gordon_max_tokens: int = 180  # Longer explosive responses for Gordon mode (1.5x increase)
+    gordon_temperature: float = 0.8  # High creativity for explosive personality
 
 
 @dataclass
@@ -33,7 +35,7 @@ class UISettings:
     """UI-related settings"""
     page_title: str = "Hey Chef"
     page_icon: str = "🍳"
-    layout: str = "centered"
+    layout: str = "wide"
     default_use_history: bool = True
     default_use_streaming: bool = False
     default_sassy_mode: bool = False

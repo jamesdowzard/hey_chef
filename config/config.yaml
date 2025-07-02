@@ -18,6 +18,8 @@ llm:
   temperature: 0.2
   sassy_max_tokens: 100  # Shorter responses for sassy mode
   sassy_temperature: 0.7  # More creative for sass
+  gordon_max_tokens: 180  # Longer explosive responses for Gordon mode (1.5x increase)
+  gordon_temperature: 0.8  # High creativity for explosive personality
 
 # UI settings
 ui:
