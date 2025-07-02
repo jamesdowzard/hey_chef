@@ -12,16 +12,9 @@ from pathlib import Path
 import requests
 
 # Silence Streamlit warnings
-warnings.filterwarnings(
-    "ignore",
-    message=".*missing ScriptRunContext.*",
-    category=UserWarning
-)
-warnings.filterwarnings(
-    "ignore",
-    message=".*This warning can be ignored when running in bare mode.*",
-    category=UserWarning
-)
+warnings.filterwarnings("ignore", category=UserWarning)
+import logging
+logging.getLogger("streamlit").setLevel(logging.ERROR)
 
 from ..audio import WakeWordDetector, WhisperSTT, TTSEngine
 from ..ai import LLMClient
@@ -125,7 +118,9 @@ class ChefApp:
             'chef_mode': 'normal',  # Track chef personality mode
             'selected_recipe': '',
             'selected_source': 'Default',
-            'selected_notion_choice_index': 0
+            'selected_notion_choice_index': 0,
+            'conversation_state': 'idle',  # idle, listening_for_wake_word, recording, processing
+            'models_loaded': False
         }
         
         for key, default_value in defaults.items():
@@ -203,18 +198,35 @@ class ChefApp:
             
             print("🎤 Voice loop started. Say 'Hey Chef' to begin!")
             
+            # Update state - models are loaded and ready
+            st.session_state.models_loaded = True
+            st.session_state.conversation_state = 'listening_for_wake_word'
+            
+            # Play ready tone to indicate models are loaded
+            self._play_ready_tone()
+            
             # Main voice loop - use threading.Event for control
             while not self.voice_loop_event.is_set():
                 try:
+                    # Update state - listening for wake word
+                    st.session_state.conversation_state = 'listening_for_wake_word'
+                    
                     # Wait for wake word (returns False if stopped)
                     detected = wwd.detect_once()
                     if not detected:
                         break
                     
+                    # Wake word detected - play tone and update state
+                    self._play_wake_word_tone()
+                    st.session_state.conversation_state = 'recording'
+                    
                     # Record user speech
                     wav_path = stt.record_until_silence()
                     if not wav_path:
                         continue
+                    
+                    # Update state - processing
+                    st.session_state.conversation_state = 'processing'
                     
                     # Convert speech to text
                     user_question = stt.speech_to_text(wav_path)
@@ -280,6 +292,8 @@ class ChefApp:
             # Update UI state
             st.session_state.voice_loop_running = False
             st.session_state.voice_loop_thread = None  # Clear thread reference
+            st.session_state.conversation_state = 'idle'
+            st.session_state.models_loaded = False
     
     def _stop_audio_processes(self):
         """Kill any running TTS audio processes."""
@@ -289,10 +303,45 @@ class ChefApp:
                 subprocess.run(["pkill", proc], check=False)
             except Exception as e:
                 print(f"⚠️ Failed to kill audio process {proc}: {e}")
+    
+    def _play_tone(self, tone_type: str):
+        """Play a tone using macOS system sounds."""
+        import subprocess
+        import threading
+        
+        def play_sound():
+            try:
+                if tone_type == "ready":
+                    # Higher pitch beep for ready
+                    subprocess.run(["afplay", "/System/Library/Sounds/Tink.aiff"], check=False)
+                elif tone_type == "wake_word":
+                    # Different sound for wake word detection
+                    subprocess.run(["afplay", "/System/Library/Sounds/Pop.aiff"], check=False)
+            except Exception as e:
+                print(f"⚠️ Failed to play tone: {e}")
+        
+        # Play sound in background thread to avoid blocking
+        threading.Thread(target=play_sound, daemon=True).start()
+    
+    def _play_ready_tone(self):
+        """Play tone when models are loaded and ready."""
+        self._play_tone("ready")
+    
+    def _play_wake_word_tone(self):
+        """Play tone when wake word is detected."""
+        self._play_tone("wake_word")
 
     def _render_header(self):
         """Render the application header."""
         st.title(f"{self.settings.ui.page_icon} Hey Chef")
+        
+        # Status bar at top - only show when listening for wake word
+        if st.session_state.voice_loop_running and st.session_state.conversation_state == 'listening_for_wake_word':
+            st.success("🟢 Say 'Hey Chef' to ask your question...")
+        elif st.session_state.voice_loop_running and st.session_state.conversation_state == 'recording':
+            st.info("🎤 Listening... Ask your question now!")
+        elif st.session_state.voice_loop_running and st.session_state.conversation_state == 'processing':
+            st.warning("⏳ Processing your question...")
         
         # Mode indicator
         mode_indicators = {
@@ -382,9 +431,8 @@ class ChefApp:
             # Voice controls
             st.subheader("🎤 Voice Control")
             
-            # Show status and Stop option
+            # Show stop button when running
             if st.session_state.voice_loop_running:
-                st.success("🟢 Listening for 'Hey Chef'...")
                 if st.button("🛑 Stop Listening", type="secondary"):
                     self.voice_loop_event.set()  # Signal thread to stop
                     if self.voice_loop_thread and self.voice_loop_thread.is_alive():
@@ -392,6 +440,8 @@ class ChefApp:
                     self._stop_audio_processes()  # Kill any playing audio
                     st.session_state.voice_loop_thread = None  # Clear thread reference
                     st.session_state.voice_loop_running = False
+                    st.session_state.conversation_state = 'idle'
+                    st.session_state.models_loaded = False
                     st.rerun()
             
             # Always return False for sidebar start; starting handled on main page
@@ -553,18 +603,30 @@ class ChefApp:
         # Render header after mode is set
         self._render_header()
 
-        # Main page voice controls (start/stop and status)
+        # Main page voice controls (start/stop)
         start_main = False
         stop_requested = False
         col_ctrl1, col_ctrl2 = st.columns([1, 3])
+        
         if st.session_state.voice_loop_running:
-            col_ctrl2.write("")  # placeholder for spacing
-            st.success("🟢 Listening for 'Hey Chef'...")
-            if col_ctrl1.button("🛑 Stop Listening", key="main_stop_listening", type="secondary"):
+            # Show dynamic button text based on state
+            if st.session_state.conversation_state == 'listening_for_wake_word':
+                button_text = "🟢 Listening for 'Hey Chef'"
+            elif st.session_state.conversation_state == 'recording':
+                button_text = "🎤 Recording"
+            elif st.session_state.conversation_state == 'processing':
+                button_text = "⏳ Processing"
+            else:
+                button_text = "🟢 Listening"
+                
+            if col_ctrl1.button(button_text, key="main_status_button", type="primary", disabled=True):
+                pass  # Disabled button, no action
+            if col_ctrl2.button("🛑 Stop", key="main_stop_listening", type="secondary"):
                 stop_requested = True
         else:
             if col_ctrl1.button("🎤 Start Listening", key="main_start_listening", type="primary", help="Start voice interaction"):
                 start_main = True
+                
         # Handle stop action immediately
         if stop_requested:
             self.voice_loop_event.set()
@@ -573,6 +635,8 @@ class ChefApp:
             self._stop_audio_processes()
             st.session_state.voice_loop_thread = None  # Clear thread reference
             st.session_state.voice_loop_running = False
+            st.session_state.conversation_state = 'idle'
+            st.session_state.models_loaded = False
             st.rerun()
         should_start = start_main
 
@@ -590,6 +654,8 @@ class ChefApp:
                 # Cache selected recipe to avoid re-fetch on reruns
                 st.session_state.selected_recipe = recipe
                 st.session_state.voice_loop_running = True
+                st.session_state.conversation_state = 'idle'  # Will change to listening_for_wake_word once models load
+                st.session_state.models_loaded = False
                 self.voice_loop_event.clear()  # Clear the stop event
                 
                 # Start voice loop in background thread
