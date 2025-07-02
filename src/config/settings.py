@@ -21,7 +21,7 @@ class AudioSettings:
 @dataclass
 class LLMSettings:
     """LLM-related settings"""
-    model: str = "gpt-4-turbo"
+    model: str = "gpt-4o"
     available_models: list = None
     max_tokens: int = 150
     temperature: float = 0.2
@@ -32,7 +32,7 @@ class LLMSettings:
     
     def __post_init__(self):
         if self.available_models is None:
-            self.available_models = ["gpt-4-turbo", "gpt-4o"]
+            self.available_models = ["gpt-4o"]
 
 
 @dataclass

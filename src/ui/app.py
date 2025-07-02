@@ -4,6 +4,24 @@ Includes sassy mode, improved UI, and better error handling.
 """
 import warnings
 import os
+import sys
+
+# Comprehensive warning suppression - must be first
+warnings.filterwarnings("ignore")
+import logging
+logging.getLogger().setLevel(logging.ERROR)
+logging.getLogger("streamlit").setLevel(logging.ERROR)
+
+# Suppress all Streamlit warnings and logging
+class NullHandler(logging.Handler):
+    def emit(self, record):
+        pass
+
+# Apply null handler to all loggers
+for name in logging.Logger.manager.loggerDict:
+    logging.getLogger(name).addHandler(NullHandler())
+    logging.getLogger(name).setLevel(logging.CRITICAL)
+
 import yaml
 import streamlit as st
 import threading
@@ -11,26 +29,75 @@ from typing import Optional, Dict, Any
 from pathlib import Path
 import requests
 
-# Silence Streamlit warnings
-warnings.filterwarnings("ignore", category=UserWarning)
-import logging
-logging.getLogger("streamlit").setLevel(logging.ERROR)
-
 from ..audio import WakeWordDetector, WhisperSTT, TTSEngine
 from ..ai import LLMClient
 from ..config import Settings, get_system_prompt
 
 API_URL = os.getenv("RECIPE_API_URL", "http://localhost:3333")
 
+# Cache for recipes to avoid repeated API calls
+_recipes_cache = None
+_recipe_details_cache = {}
+_server_connected = None
+
+def check_notion_server():
+    """Check if Notion server is available."""
+    global _server_connected
+    if _server_connected is not None:
+        return _server_connected
+    
+    try:
+        resp = requests.get(f"{API_URL}/health", timeout=2)
+        _server_connected = resp.status_code == 200
+    except:
+        _server_connected = False
+    return _server_connected
+
 def fetch_recipes():
-    resp = requests.get(f"{API_URL}/recipes")
-    resp.raise_for_status()
-    return resp.json().get("recipes", [])
+    """Fetch recipes with caching and error handling."""
+    global _recipes_cache
+    
+    if _recipes_cache is not None:
+        return _recipes_cache
+    
+    if not check_notion_server():
+        return []
+    
+    try:
+        resp = requests.get(f"{API_URL}/recipes", timeout=5)
+        resp.raise_for_status()
+        _recipes_cache = resp.json().get("recipes", [])
+        return _recipes_cache
+    except Exception as e:
+        st.warning(f"Could not fetch recipes from Notion: {e}")
+        return []
 
 def fetch_recipe_details(recipe_id):
-    resp = requests.get(f"{API_URL}/recipes/{recipe_id}")
-    resp.raise_for_status()
-    return resp.json()
+    """Fetch recipe details with caching."""
+    global _recipe_details_cache
+    
+    if recipe_id in _recipe_details_cache:
+        return _recipe_details_cache[recipe_id]
+    
+    if not check_notion_server():
+        return {}
+    
+    try:
+        resp = requests.get(f"{API_URL}/recipes/{recipe_id}", timeout=10)
+        resp.raise_for_status()
+        details = resp.json()
+        _recipe_details_cache[recipe_id] = details
+        return details
+    except Exception as e:
+        st.warning(f"Could not fetch recipe details: {e}")
+        return {}
+
+def clear_notion_cache():
+    """Clear the Notion cache to force refresh."""
+    global _recipes_cache, _recipe_details_cache, _server_connected
+    _recipes_cache = None
+    _recipe_details_cache = {}
+    _server_connected = None
 
 def format_notion_recipe(details):
     md = ""
@@ -106,6 +173,7 @@ class ChefApp:
         self.voice_loop_thread = st.session_state.voice_loop_thread
         self._init_session_state()
         self._setup_page()
+        self._preload_models()
     
     def _init_session_state(self):
         """Initialize Streamlit session state variables."""
@@ -120,7 +188,14 @@ class ChefApp:
             'selected_source': 'Default',
             'selected_notion_choice_index': 0,
             'conversation_state': 'idle',  # idle, listening_for_wake_word, recording, processing
-            'models_loaded': False
+            'models_loaded': False,
+            'current_question': '',  # Current user question
+            'current_response': '',  # Current model response
+            'response_chunks': [],  # For typewriter effect
+            'response_complete': False,
+            'chat_messages': [],  # List of chat messages [{type: 'user'/'chef', content: str, timestamp: str, response_time: float}]
+            'current_response_start_time': None,
+            'notion_server_checked': False
         }
         
         for key, default_value in defaults.items():
@@ -134,6 +209,51 @@ class ChefApp:
             page_icon=self.settings.ui.page_icon,
             layout="wide"
         )
+    
+    def _preload_models(self):
+        """Pre-load Whisper model at app startup for faster response times."""
+        if 'whisper_loaded' not in st.session_state:
+            st.session_state.whisper_loaded = False
+            st.session_state.models_loading = True
+            
+        # Check Notion server connection in background (non-blocking)
+        if not st.session_state.get('notion_server_checked', False):
+            st.session_state.notion_server_checked = True
+            if check_notion_server():
+                # Pre-fetch recipes in background
+                try:
+                    fetch_recipes()  # This will cache the results
+                except:
+                    pass  # Silently fail, user can retry later
+            
+        # Only load if not already loaded
+        if not st.session_state.whisper_loaded and not st.session_state.get('whisper_loading_started', False):
+            st.session_state.whisper_loading_started = True
+            
+            # Show loading message
+            loading_placeholder = st.empty()
+            loading_placeholder.info("🔄 Loading Whisper model...")
+            
+            try:
+                from ..audio import WhisperSTT
+                # Create and initialize Whisper model
+                stt = WhisperSTT(
+                    model_size=self.settings.audio.whisper_model_size,
+                    aggressiveness=self.settings.audio.vad_aggressiveness,
+                    max_silence_sec=self.settings.audio.max_silence_sec
+                )
+                # Store in session state for reuse
+                st.session_state.whisper_model = stt
+                st.session_state.whisper_loaded = True
+                st.session_state.models_loading = False
+                
+                loading_placeholder.success("✅ Whisper model ready!")
+                self._play_ready_tone()
+                
+            except Exception as e:
+                st.session_state.whisper_loaded = False
+                st.session_state.models_loading = False
+                loading_placeholder.error(f"❌ Failed to load Whisper model: {e}")
     
     def _load_default_recipe(self) -> str:
         """Load the default recipe from YAML file."""
@@ -165,11 +285,13 @@ class ChefApp:
             # Allow wake-word detection to be interrupted
             wwd.stop_event = self.voice_loop_event
             
-            stt = WhisperSTT(
-                model_size=self.settings.audio.whisper_model_size,
-                aggressiveness=self.settings.audio.vad_aggressiveness,
-                max_silence_sec=self.settings.audio.max_silence_sec
-            )
+            # Use pre-loaded Whisper model (should always be available)
+            if st.session_state.get('whisper_loaded', False) and 'whisper_model' in st.session_state:
+                stt = st.session_state.whisper_model
+            else:
+                # This should not happen if models are pre-loaded correctly
+                st.error("❌ Whisper model not available. Please refresh the page.")
+                return
             
             llm = LLMClient(
                 model=model,
@@ -220,6 +342,10 @@ class ChefApp:
                     self._play_wake_word_tone()
                     st.session_state.conversation_state = 'recording'
                     
+                    # Wait for tone to finish before starting to listen (reduced for responsiveness)
+                    import time
+                    time.sleep(0.5)
+                    
                     # Record user speech
                     wav_path = stt.record_until_silence()
                     if not wav_path:
@@ -235,15 +361,46 @@ class ChefApp:
                     
                     print(f"🗣️ User asked: {user_question}")
                     
+                    # Add user message to chat
+                    import time
+                    from datetime import datetime
+                    current_time = datetime.now().strftime("%H:%M:%S")
+                    
+                    # Initialize chat_messages if not exists
+                    if not hasattr(st.session_state, 'chat_messages') or st.session_state.chat_messages is None:
+                        st.session_state.chat_messages = []
+                    
+                    # Add user question to chat history
+                    st.session_state.chat_messages.append({
+                        'type': 'user',
+                        'content': user_question,
+                        'timestamp': current_time
+                    })
+                    
+                    # Update UI with user question
+                    st.session_state.current_question = user_question
+                    st.session_state.current_response = ""
+                    st.session_state.response_chunks = []
+                    st.session_state.response_complete = False
+                    st.session_state.current_response_start_time = time.time()
+                    
                     # Get AI response
                     if streaming:
-                        answer_text = tts.stream_and_play(
-                            llm.stream(
+                        # Custom streaming with typewriter effect
+                        def stream_with_typewriter():
+                            chunks = []
+                            for chunk in llm.stream(
                                 recipe_text=(recipe if history is None else ""),
                                 user_question=user_question,
                                 history=history,
                                 chef_mode=chef_mode
-                            ),
+                            ):
+                                chunks.append(chunk)
+                                st.session_state.response_chunks = chunks.copy()
+                                yield chunk
+                        
+                        answer_text = tts.stream_and_play(
+                            stream_with_typewriter(),
                             start_threshold=80
                         )
                     else:
@@ -253,7 +410,9 @@ class ChefApp:
                             history=history,
                             chef_mode=chef_mode
                         )
-                        # For non-streaming, speak the complete response at once
+                        # For non-streaming, show complete response immediately
+                        st.session_state.response_chunks = [response]
+                        st.session_state.response_complete = True
                         tts.say(response)
                         answer_text = response
                     
@@ -261,9 +420,33 @@ class ChefApp:
                     if history is not None:
                         llm.update_history_with_response(history, answer_text, chef_mode)
                     
-                    # Store response for UI (thread-safe assignment)
+                    # Calculate response time
+                    response_time = time.time() - st.session_state.current_response_start_time
+                    
+                    # Initialize chat_messages if not exists
+                    if not hasattr(st.session_state, 'chat_messages') or st.session_state.chat_messages is None:
+                        st.session_state.chat_messages = []
+                    
+                    # Add chef response to chat history
+                    st.session_state.chat_messages.append({
+                        'type': 'chef',
+                        'content': answer_text,
+                        'timestamp': datetime.now().strftime("%H:%M:%S"),
+                        'response_time': f" ({response_time:.1f}s)"
+                    })
+                    
+                    # Mark response as complete and store final answer
+                    st.session_state.current_response = answer_text
+                    st.session_state.response_complete = True
                     st.session_state.last_answer = answer_text
                     st.session_state.current_mode = chef_mode
+                    st.session_state.current_response_start_time = None
+                    
+                    # Clear current conversation state for next question
+                    st.session_state.current_question = ""
+                    st.session_state.current_response = ""
+                    st.session_state.response_chunks = []
+                    st.session_state.response_complete = False
                     
                     print(f"🤖 Assistant responded: {answer_text}")
                     
@@ -294,6 +477,13 @@ class ChefApp:
             st.session_state.voice_loop_thread = None  # Clear thread reference
             st.session_state.conversation_state = 'idle'
             st.session_state.models_loaded = False
+            # Clear conversation display
+            st.session_state.current_question = ""
+            st.session_state.current_response = ""
+            st.session_state.response_chunks = []
+            st.session_state.response_complete = False
+            st.session_state.chat_messages = []
+            st.session_state.current_response_start_time = None
     
     def _stop_audio_processes(self):
         """Kill any running TTS audio processes."""
@@ -330,6 +520,159 @@ class ChefApp:
     def _play_wake_word_tone(self):
         """Play tone when wake word is detected."""
         self._play_tone("wake_word")
+    
+    def _render_conversation_display(self):
+        """Render the chat-style conversation display."""
+        st.markdown("---")
+        st.markdown("### 💬 Conversation")
+        
+        # Create scrollable chat container
+        st.markdown(
+                """
+                <style>
+                .chat-container {
+                    max-height: 400px;
+                    overflow-y: auto;
+                    padding: 10px;
+                    border: 1px solid #e0e0e0;
+                    border-radius: 10px;
+                    background-color: #fafafa;
+                }
+                </style>
+            """,
+            unsafe_allow_html=True
+        )
+        
+        # Create chat container
+        chat_container = st.container()
+        
+        # Initialize chat_messages if not exists
+        if not hasattr(st.session_state, 'chat_messages') or st.session_state.chat_messages is None:
+            st.session_state.chat_messages = []
+        
+        # Limit chat history to last 20 messages to prevent memory issues
+        if len(st.session_state.chat_messages) > 20:
+            st.session_state.chat_messages = st.session_state.chat_messages[-20:]
+        
+        with chat_container:
+            # Display all chat messages
+            for i, msg in enumerate(st.session_state.chat_messages):
+                self._render_chat_message(msg)
+            
+            # Show current active conversation if in progress
+            if st.session_state.current_question and not any(
+                msg['content'] == st.session_state.current_question and msg['type'] == 'user' 
+                for msg in st.session_state.chat_messages
+            ):
+                # Show current user question
+                self._render_chat_message({
+                    'type': 'user',
+                    'content': st.session_state.current_question,
+                    'timestamp': 'now'
+                })
+            
+            # Show current response being typed
+            if st.session_state.response_chunks or (st.session_state.conversation_state == 'processing' and st.session_state.current_question):
+                partial_text = "".join(st.session_state.response_chunks)
+                
+                # Calculate response time if available
+                response_time_str = ""
+                if st.session_state.current_response_start_time:
+                    import time
+                    current_time = time.time() - st.session_state.current_response_start_time
+                    response_time_str = f" ({current_time:.1f}s)"
+                
+                if partial_text:
+                    self._render_chat_message({
+                        'type': 'chef',
+                        'content': partial_text + "▌",  # Add cursor
+                        'timestamp': 'typing...',
+                        'response_time': response_time_str
+                    })
+                else:
+                    self._render_chat_message({
+                        'type': 'chef',
+                        'content': "_Thinking..._",
+                        'timestamp': 'typing...',
+                        'response_time': response_time_str
+                    })
+            
+            # Show status when waiting
+            elif st.session_state.conversation_state == 'listening_for_wake_word':
+                st.info("🟢 Say 'Hey Chef' to ask a question...")
+            elif st.session_state.conversation_state == 'recording':
+                st.info("🎤 Listening... Ask your question now!")
+            
+            # Auto-scroll marker (invisible element at bottom)
+            st.markdown('<div id="chat-bottom"></div>', unsafe_allow_html=True)
+            
+        # Auto-scroll JavaScript
+        st.markdown(
+            """
+            <script>
+            var element = document.getElementById("chat-bottom");
+            if (element) {
+                element.scrollIntoView({behavior: "smooth"});
+            }
+            </script>
+            """,
+            unsafe_allow_html=True
+        )
+        
+        st.markdown("---")
+    
+    def _render_chat_message(self, message):
+        """Render a single chat message with styling."""
+        if message['type'] == 'user':
+            # User message - right aligned, blue background
+            st.markdown(
+                f"""
+                <div style="text-align: right; margin: 10px 0;">
+                    <div style="display: inline-block; background-color: #e3f2fd; padding: 10px 15px; 
+                                border-radius: 18px 18px 4px 18px; max-width: 70%; text-align: left;">
+                        <strong>🗣️ You:</strong><br>
+                        {message['content']}
+                        <div style="font-size: 0.8em; color: #666; margin-top: 5px;">
+                            {message.get('timestamp', '')}
+                        </div>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+        else:
+            # Chef message - left aligned, chef mode colored
+            mode_colors = {
+                'normal': '#f0f8ff',
+                'sassy': '#ffe4e1', 
+                'gordon_ramsay': '#fff5ee'
+            }
+            bg_color = mode_colors.get(st.session_state.chef_mode, '#f0f8ff')
+            
+            # Chef name with response time
+            chef_names = {
+                'normal': '🤖 Chef Bot',
+                'sassy': '😈 Chef Sass',
+                'gordon_ramsay': '🔥 Chef Ramsay'
+            }
+            chef_name = chef_names.get(st.session_state.chef_mode, '🤖 Chef Bot')
+            response_time = message.get('response_time', '')
+            
+            st.markdown(
+                f"""
+                <div style="text-align: left; margin: 10px 0;">
+                    <div style="display: inline-block; background-color: {bg_color}; padding: 10px 15px;
+                                border-radius: 18px 18px 18px 4px; max-width: 70%; text-align: left;">
+                        <strong>{chef_name}{response_time}:</strong><br>
+                        {message['content']}
+                        <div style="font-size: 0.8em; color: #666; margin-top: 5px;">
+                            {message.get('timestamp', '')}
+                        </div>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
 
     def _render_header(self):
         """Render the application header."""
@@ -442,107 +785,145 @@ class ChefApp:
                     st.session_state.voice_loop_running = False
                     st.session_state.conversation_state = 'idle'
                     st.session_state.models_loaded = False
+                    # Clear conversation display
+                    st.session_state.current_question = ""
+                    st.session_state.current_response = ""
+                    st.session_state.response_chunks = []
+                    st.session_state.response_complete = False
                     st.rerun()
             
             # Always return False for sidebar start; starting handled on main page
             return selected_model, chef_mode, use_history, use_streaming, False
     
     def _render_recipe_section(self) -> str:
-        """Render the recipe selection section."""
+        """Render the recipe selection section with tabs."""
         st.subheader("📝 Recipe Selection")
         
-        col1, col2 = st.columns([5, 1])
+        # Use tabs instead of radio buttons
+        tab1, tab2, tab3 = st.tabs(["📄 Default", "🗂️ Notion DB", "✏️ Custom"])
         
-        with col1:
-            # Persist selected recipe source between reruns
-            sources = ["Default", "Notion DB", "Custom"]
-            default_index = sources.index(st.session_state.selected_source) if st.session_state.selected_source in sources else 0
-            source = st.radio(
-                "Recipe source",
-                sources,
-                index=default_index,
-                format_func=lambda x: {
-                    "Default": "📄 Default",
-                    "Notion DB": "🗂️ Notion DB",
-                    "Custom": "✏️ Custom"
-                }[x],
-                horizontal=True
-            )
-            st.session_state.selected_source = source
-
-            if source == "Default":
-                default_recipe = self._load_default_recipe()
-                if default_recipe:
-                    with st.expander("👀 View default recipe"):
-                        st.markdown(default_recipe)
-                    return default_recipe
-                else:
-                    st.error("❌ No default recipe found")
-                    source = "Notion DB"
-
-            if source == "Notion DB":
-                st.write("Fetching recipes from Notion...")
+        recipe_content = ""
+        
+        with tab1:
+            default_recipe = self._load_default_recipe()
+            if default_recipe:
+                st.markdown("**Default Recipe:**")
+                st.markdown(default_recipe)
+                recipe_content = default_recipe
+            else:
+                st.error("❌ No default recipe found")
+        
+        with tab2:
+            # Check server connection status
+            if not check_notion_server():
+                st.error("❌ Notion server not available. Please check if the server is running.")
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button("🔄 Retry Connection", key="retry_notion"):
+                        clear_notion_cache()
+                        st.rerun()
+                with col2:
+                    if st.button("🗑️ Clear Cache", key="clear_notion_cache"):
+                        clear_notion_cache()
+                        st.success("Cache cleared!")
+            else:
                 try:
-                    recipes = fetch_recipes()
-                    # Extract recipe names from title property for each recipe
-                    options = []
-                    for r in recipes:
-                        props = r.get("properties", {})
-                        # Find the title property (type "title")
-                        title_prop = None
-                        for prop in props.values():
-                            if prop.get("type") == "title":
-                                title_prop = prop
-                                break
-                        if title_prop and title_prop.get("title"):
-                            name = next((t.get("plain_text") for t in title_prop["title"] if t.get("plain_text")), "<Unnamed>")
+                    # Show loading state if needed
+                    if _recipes_cache is None:
+                        with st.spinner("Loading recipes from Notion..."):
+                            recipes = fetch_recipes()
+                    else:
+                        recipes = fetch_recipes()
+                        
+                    if not recipes:
+                        st.info("📝 No recipes found in Notion database.")
+                    else:
+                        # Extract recipe names from title property for each recipe
+                        options = []
+                        for r in recipes:
+                            props = r.get("properties", {})
+                            # Find the title property (type "title")
+                            title_prop = None
+                            for prop in props.values():
+                                if prop.get("type") == "title":
+                                    title_prop = prop
+                                    break
+                            if title_prop and title_prop.get("title"):
+                                name = next((t.get("plain_text") for t in title_prop["title"] if t.get("plain_text")), "<Unnamed>")
+                            else:
+                                name = "<Unnamed>"
+                            options.append(name)
+                        
+                        # Persist selected Notion recipe choice index
+                        default_notion_index = st.session_state.selected_notion_choice_index if 0 <= st.session_state.selected_notion_choice_index < len(options) else 0
+                        choice = st.selectbox("Select a recipe", options, index=default_notion_index, key="notion_recipe_select")
+                        st.session_state.selected_notion_choice_index = options.index(choice)
+                        selected = next(r for r, name in zip(recipes, options) if name == choice)
+                        
+                        # Show loading for recipe details if not cached
+                        recipe_id = selected.get("id")
+                        if recipe_id not in _recipe_details_cache:
+                            with st.spinner("Loading recipe details..."):
+                                details = fetch_recipe_details(recipe_id)
                         else:
-                            name = "<Unnamed>"
-                        options.append(name)
-                    # Persist selected Notion recipe choice index
-                    default_notion_index = st.session_state.selected_notion_choice_index if 0 <= st.session_state.selected_notion_choice_index < len(options) else 0
-                    choice = st.selectbox("Select a recipe", options, index=default_notion_index)
-                    st.session_state.selected_notion_choice_index = options.index(choice)
-                    selected = next(r for r, name in zip(recipes, options) if name == choice)
-                    details = fetch_recipe_details(selected.get("id"))
-                    content_md = format_notion_recipe(details)
-                    with st.expander("👀 View selected recipe"):
+                            details = fetch_recipe_details(recipe_id)
+                            
+                        content_md = format_notion_recipe(details)
+                        
+                        st.markdown("**Selected Recipe:**")
                         st.markdown(content_md)
-                    return content_md
+                        
+                        # Return this recipe if this tab is active and valid
+                        if content_md:
+                            recipe_content = content_md
+                            
                 except Exception as e:
                     st.error(f"❌ Failed to load recipes: {e}")
-                    source = "Custom"
-
-            if source == "Custom":
-                recipe_input = st.text_area(
-                    label="Custom recipe (plain text or markdown):",
-                    value=st.session_state.custom_recipe,
-                    height=300,
-                    placeholder="Enter your recipe here..."
-                )
-                col_save, col_clear = st.columns(2)
-                with col_save:
-                    if st.button("💾 Save Recipe", type="secondary"):
-                        st.session_state.custom_recipe = recipe_input
-                        st.success("✅ Custom recipe saved!")
-                with col_clear:
-                    if st.button("🗑️ Clear Recipe", type="secondary"):
-                        st.session_state.custom_recipe = ""
+                    if st.button("🔄 Retry", key="retry_recipes"):
+                        clear_notion_cache()
                         st.rerun()
-                return recipe_input
-
-        with col2:
+        
+        with tab3:
+            st.markdown("**Custom Recipe:**")
+            recipe_input = st.text_area(
+                label="Enter your recipe (plain text or markdown):",
+                value=st.session_state.custom_recipe,
+                height=300,
+                placeholder="Enter your recipe here...",
+                key="custom_recipe_input"
+            )
+            
+            col_save, col_clear = st.columns(2)
+            with col_save:
+                if st.button("💾 Save Recipe", type="secondary"):
+                    st.session_state.custom_recipe = recipe_input
+                    st.success("✅ Custom recipe saved!")
+            with col_clear:
+                if st.button("🗑️ Clear Recipe", type="secondary"):
+                    st.session_state.custom_recipe = ""
+                    st.rerun()
+            
+            # Show saved recipe if available
+            if st.session_state.custom_recipe:
+                st.markdown("**Saved Custom Recipe:**")
+                st.markdown(st.session_state.custom_recipe)
+                recipe_content = st.session_state.custom_recipe
+            elif recipe_input.strip():
+                recipe_content = recipe_input
+        
+        # Recipe tips in a sidebar
+        with st.sidebar:
+            st.markdown("### 📝 Recipe Tips")
             st.info(
                 """
-                **Recipe Tips:**
                 - Include ingredients and instructions
-                - Add cooking times and temperatures
+                - Add cooking times and temperatures  
                 - Mention serving sizes
                 - Use clear, simple language
                 """
             )
-
-        return ""
+        
+        return recipe_content if recipe_content else default_recipe if 'default_recipe' in locals() else ""
     
     def _render_last_response(self):
         """Display the last AI response if available."""
@@ -624,7 +1005,22 @@ class ChefApp:
             if col_ctrl2.button("🛑 Stop", key="main_stop_listening", type="secondary"):
                 stop_requested = True
         else:
-            if col_ctrl1.button("🎤 Start Listening", key="main_start_listening", type="primary", help="Start voice interaction"):
+            # Disable button until models are loaded
+            models_ready = st.session_state.get('whisper_loaded', False)
+            button_disabled = not models_ready or st.session_state.get('models_loading', False)
+            
+            if st.session_state.get('models_loading', False):
+                button_text = "🔄 Loading Models..."
+                help_text = "Please wait while models are loading"
+            elif not models_ready:
+                button_text = "⏳ Models Not Ready"
+                help_text = "Whisper model is still loading"
+            else:
+                button_text = "🎤 Start Listening"
+                help_text = "Start voice interaction"
+            
+            if col_ctrl1.button(button_text, key="main_start_listening", type="primary", 
+                              disabled=button_disabled, help=help_text):
                 start_main = True
                 
         # Handle stop action immediately
@@ -637,8 +1033,18 @@ class ChefApp:
             st.session_state.voice_loop_running = False
             st.session_state.conversation_state = 'idle'
             st.session_state.models_loaded = False
+            # Clear conversation display
+            st.session_state.current_question = ""
+            st.session_state.current_response = ""
+            st.session_state.response_chunks = []
+            st.session_state.response_complete = False
+            st.session_state.chat_messages = []
+            st.session_state.current_response_start_time = None
             st.rerun()
         should_start = start_main
+
+        # Show conversation display after buttons
+        self._render_conversation_display()
 
         # Recipe section (cached during active voice loop to avoid repeated GETs)
         if st.session_state.voice_loop_running:
@@ -676,7 +1082,7 @@ class ChefApp:
         # Auto-refresh to show responses (only if voice loop is running)
         if st.session_state.voice_loop_running:
             import time
-            time.sleep(1)  # Slightly longer sleep to reduce CPU usage
+            time.sleep(0.5)  # Reduced from 1s for better responsiveness
             st.rerun()
 
 

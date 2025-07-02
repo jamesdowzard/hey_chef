@@ -1,0 +1,318 @@
+"""
+Tests for UI app functions and Notion integration.
+"""
+import pytest
+from unittest.mock import Mock, patch, MagicMock
+import requests
+import sys
+import os
+
+# Add src to path
+sys.path.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'src'))
+
+# Import functions to test
+import ui.app as app_module
+from ui.app import (
+    check_notion_server, 
+    fetch_recipes, 
+    fetch_recipe_details, 
+    clear_notion_cache,
+    format_notion_recipe
+)
+
+
+class TestNotionConnection:
+    """Test Notion server connection functions."""
+    
+    def test_check_notion_server_success(self):
+        """Test successful server connection check."""
+        with patch('ui.app.requests.get') as mock_get:
+            mock_response = Mock()
+            mock_response.status_code = 200
+            mock_get.return_value = mock_response
+            
+            result = check_notion_server()
+            assert result is True
+            mock_get.assert_called_once_with("http://localhost:3333/health", timeout=2)
+    
+    def test_check_notion_server_failure(self):
+        """Test server connection check failure."""
+        with patch('ui.app.requests.get') as mock_get:
+            mock_get.side_effect = requests.exceptions.RequestException("Connection failed")
+            
+            result = check_notion_server()
+            assert result is False
+    
+    def test_check_notion_server_timeout(self):
+        """Test server connection check timeout."""
+        with patch('ui.app.requests.get') as mock_get:
+            mock_get.side_effect = requests.exceptions.Timeout("Timeout")
+            
+            result = check_notion_server()
+            assert result is False
+    
+    def test_check_notion_server_caching(self):
+        """Test that server connection status is cached."""
+        with patch('ui.app.requests.get') as mock_get:
+            mock_response = Mock()
+            mock_response.status_code = 200
+            mock_get.return_value = mock_response
+            
+            # First call should hit the API
+            result1 = check_notion_server()
+            assert result1 is True
+            assert mock_get.call_count == 1
+            
+            # Second call should use cache
+            result2 = check_notion_server()
+            assert result2 is True
+            assert mock_get.call_count == 1  # No additional calls
+
+
+class TestRecipeFetching:
+    """Test recipe fetching functions."""
+    
+    def setUp(self):
+        """Clear cache before each test."""
+        clear_notion_cache()
+    
+    @patch('ui.app.check_notion_server')
+    @patch('ui.app.requests.get')
+    def test_fetch_recipes_success(self, mock_get, mock_check_server):
+        """Test successful recipe fetching."""
+        self.setUp()
+        
+        # Mock server check
+        mock_check_server.return_value = True
+        
+        # Mock API response
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "recipes": [
+                {"id": "1", "properties": {"Name": {"type": "title"}}},
+                {"id": "2", "properties": {"Name": {"type": "title"}}}
+            ]
+        }
+        mock_response.raise_for_status = Mock()
+        mock_get.return_value = mock_response
+        
+        result = fetch_recipes()
+        assert len(result) == 2
+        assert result[0]["id"] == "1"
+        mock_get.assert_called_once_with("http://localhost:3333/recipes", timeout=5)
+    
+    @patch('ui.app.check_notion_server')
+    def test_fetch_recipes_server_down(self, mock_check_server):
+        """Test recipe fetching when server is down."""
+        self.setUp()
+        
+        mock_check_server.return_value = False
+        
+        result = fetch_recipes()
+        assert result == []
+    
+    @patch('ui.app.check_notion_server')
+    @patch('ui.app.requests.get')
+    def test_fetch_recipes_caching(self, mock_get, mock_check_server):
+        """Test recipe caching functionality."""
+        self.setUp()
+        
+        mock_check_server.return_value = True
+        
+        # Mock API response
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"recipes": [{"id": "1"}]}
+        mock_response.raise_for_status = Mock()
+        mock_get.return_value = mock_response
+        
+        # First call should hit API
+        result1 = fetch_recipes()
+        assert len(result1) == 1
+        assert mock_get.call_count == 1
+        
+        # Second call should use cache
+        result2 = fetch_recipes()
+        assert len(result2) == 1
+        assert mock_get.call_count == 1  # No additional calls
+    
+    @patch('ui.app.check_notion_server')
+    @patch('ui.app.requests.get')
+    def test_fetch_recipe_details_success(self, mock_get, mock_check_server):
+        """Test successful recipe details fetching."""
+        self.setUp()
+        
+        mock_check_server.return_value = True
+        
+        # Mock API response
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "id": "test_id",
+            "properties": {"Name": {"type": "title"}},
+            "content": [{"type": "paragraph"}]
+        }
+        mock_response.raise_for_status = Mock()
+        mock_get.return_value = mock_response
+        
+        result = fetch_recipe_details("test_id")
+        assert result["id"] == "test_id"
+        assert "properties" in result
+        assert "content" in result
+        mock_get.assert_called_once_with("http://localhost:3333/recipes/test_id", timeout=10)
+    
+    @patch('ui.app.check_notion_server')
+    @patch('ui.app.requests.get')
+    def test_fetch_recipe_details_timeout(self, mock_get, mock_check_server):
+        """Test recipe details fetching with timeout."""
+        self.setUp()
+        
+        mock_check_server.return_value = True
+        mock_get.side_effect = requests.exceptions.Timeout("Timeout")
+        
+        with patch('ui.app.st.warning') as mock_warning:
+            result = fetch_recipe_details("test_id")
+            assert result == {}
+            mock_warning.assert_called_once()
+    
+    def test_clear_notion_cache(self):
+        """Test cache clearing functionality."""
+        # Manually set cache values
+        import ui.app as app_module
+        app_module._recipes_cache = [{"id": "test"}]
+        app_module._recipe_details_cache = {"test": {"id": "test"}}
+        app_module._server_connected = True
+        
+        clear_notion_cache()
+        
+        assert app_module._recipes_cache is None
+        assert app_module._recipe_details_cache == {}
+        assert app_module._server_connected is None
+
+
+class TestRecipeFormatting:
+    """Test recipe formatting functions."""
+    
+    def test_format_notion_recipe_basic(self):
+        """Test basic recipe formatting."""
+        details = {
+            "properties": {
+                "Name": {
+                    "type": "title",
+                    "title": [{"plain_text": "Test Recipe"}]
+                },
+                "Description": {
+                    "type": "rich_text", 
+                    "rich_text": [{"plain_text": "A test recipe"}]
+                }
+            },
+            "content": [
+                {
+                    "type": "heading_1",
+                    "heading_1": {
+                        "rich_text": [{"plain_text": "Ingredients"}]
+                    }
+                },
+                {
+                    "type": "paragraph",
+                    "paragraph": {
+                        "rich_text": [{"plain_text": "Salt and pepper"}]
+                    }
+                }
+            ]
+        }
+        
+        result = format_notion_recipe(details)
+        
+        assert "# Test Recipe" in result
+        assert "A test recipe" in result
+        assert "# Ingredients" in result
+        assert "Salt and pepper" in result
+    
+    def test_format_notion_recipe_empty(self):
+        """Test formatting empty recipe."""
+        details = {}
+        
+        result = format_notion_recipe(details)
+        assert result == ""
+    
+    def test_format_notion_recipe_no_content(self):
+        """Test formatting recipe with no content."""
+        details = {
+            "properties": {
+                "Name": {
+                    "type": "title",
+                    "title": [{"plain_text": "Test Recipe"}]
+                }
+            },
+            "content": []
+        }
+        
+        result = format_notion_recipe(details)
+        assert "# Test Recipe" in result
+        assert len(result.strip()) > 0
+    
+    def test_format_notion_recipe_complex_blocks(self):
+        """Test formatting with various block types."""
+        details = {
+            "properties": {},
+            "content": [
+                {
+                    "type": "bulleted_list_item",
+                    "bulleted_list_item": {
+                        "rich_text": [{"plain_text": "List item"}]
+                    }
+                },
+                {
+                    "type": "numbered_list_item", 
+                    "numbered_list_item": {
+                        "rich_text": [{"plain_text": "Numbered item"}]
+                    }
+                },
+                {
+                    "type": "code",
+                    "code": {
+                        "rich_text": [{"plain_text": "code snippet"}]
+                    }
+                }
+            ]
+        }
+        
+        result = format_notion_recipe(details)
+        
+        assert "- List item" in result
+        assert "1. Numbered item" in result
+        assert "```" in result
+        assert "code snippet" in result
+
+
+class TestErrorHandling:
+    """Test error handling in app functions."""
+    
+    @patch('ui.app.requests.get')
+    def test_network_error_handling(self, mock_get):
+        """Test handling of network errors."""
+        mock_get.side_effect = requests.exceptions.ConnectionError("Network error")
+        
+        # Should not raise exception
+        result = check_notion_server()
+        assert result is False
+    
+    @patch('ui.app.check_notion_server')
+    @patch('ui.app.requests.get')
+    def test_malformed_response_handling(self, mock_get, mock_check_server):
+        """Test handling of malformed API responses."""
+        mock_check_server.return_value = True
+        
+        # Mock malformed response
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.side_effect = ValueError("Invalid JSON")
+        mock_response.raise_for_status = Mock()
+        mock_get.return_value = mock_response
+        
+        with patch('ui.app.st.warning') as mock_warning:
+            result = fetch_recipes()
+            assert result == []
+            mock_warning.assert_called_once()

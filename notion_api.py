@@ -11,14 +11,38 @@ print("Loaded NOTION_RECIPES_DB_ID:", os.getenv("NOTION_RECIPES_DB_ID"))
 app = FastAPI()
 notion = Client(auth=os.getenv("NOTION_API_TOKEN"))
 
-def fetch_children(block_id):
-    blocks = notion.blocks.children.list(block_id=block_id)
-    results = []
-    for block in blocks.get("results", []):
-        if block.get("has_children"):
-            block["children"] = fetch_children(block.get("id"))
-        results.append(block)
-    return results
+@app.get("/health")
+def health_check():
+    """Health check endpoint."""
+    return {"status": "healthy", "service": "notion-api"}
+
+def fetch_children(block_id, max_depth=3, current_depth=0):
+    """Fetch children blocks with depth limiting to prevent timeouts."""
+    if current_depth >= max_depth:
+        return []
+    
+    try:
+        blocks = notion.blocks.children.list(block_id=block_id)
+        results = []
+        for block in blocks.get("results", []):
+            # Only fetch children for certain block types to reduce API calls
+            if (block.get("has_children") and 
+                current_depth < max_depth - 1 and
+                block.get("type") in ["toggle", "column_list", "table"]):
+                try:
+                    block["children"] = fetch_children(
+                        block.get("id"), 
+                        max_depth, 
+                        current_depth + 1
+                    )
+                except Exception:
+                    # If fetching children fails, continue without them
+                    block["children"] = []
+            results.append(block)
+        return results
+    except Exception as e:
+        print(f"Error fetching children for {block_id}: {e}")
+        return []
 
 @app.get("/recipes")
 def list_recipes():
@@ -36,11 +60,20 @@ def list_recipes():
 
 @app.get("/recipes/{recipe_id}")
 def get_recipe(recipe_id: str):
+    """Get recipe with timeout protection."""
     try:
         page = notion.pages.retrieve(page_id=recipe_id)
     except Exception:
         raise HTTPException(status_code=404, detail="Recipe not found")
+    
     props = page.get("properties", {})
     filtered = {name: prop for name, prop in props.items() if prop.get("type") != "rollup"}
-    content = fetch_children(recipe_id)
+    
+    # Fetch content with limited depth to prevent timeouts
+    try:
+        content = fetch_children(recipe_id, max_depth=2)  # Limit to 2 levels deep
+    except Exception as e:
+        print(f"Error fetching content for {recipe_id}: {e}")
+        content = []  # Return empty content if fetch fails
+    
     return {"id": recipe_id, "properties": filtered, "content": content} 
