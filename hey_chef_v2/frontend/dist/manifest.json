@@ -1,0 +1,20 @@
+{
+  "name": "Hey Chef - AI Cooking Assistant",
+  "short_name": "Hey Chef",
+  "description": "Your voice-controlled AI cooking assistant with multiple chef personalities",
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#ed7611",
+  "background_color": "#ffffff",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/chef-hat.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ],
+  "categories": ["food", "lifestyle", "utilities"],
+  "lang": "en-US",
+  "scope": "/"
+}
