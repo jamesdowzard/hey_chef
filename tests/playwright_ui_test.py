@@ -338,8 +338,10 @@ class HeyChefUITester:
             recipe_instructions = await self.page.query_selector('h3:has-text("Instructions"), h4:has-text("Instructions"), h3:has-text("Steps")')
             
             # Check for recipe meta information
-            cooking_time = await self.page.query_selector('[class*="Clock"], text*="min", text*="hour"')
-            servings = await self.page.query_selector('text*="serving"')
+            cooking_time = await self.page.query_selector('[class*="Clock"]')
+            if not cooking_time:
+                cooking_time = await self.page.query_selector('text=/\\d+\\s*(min|hour|minute)/')
+            servings = await self.page.query_selector('text=/\\d+\\s*serving/')
             
             # Test back navigation
             back_navigation_works = False
