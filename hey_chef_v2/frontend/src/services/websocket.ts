@@ -17,19 +17,20 @@ export class WebSocketService {
 
   connect(): Promise<void> {
     return new Promise((resolve, reject) => {
+      console.log('Attempting WebSocket connection to:', this.url);
       try {
         this.ws = new WebSocket(this.url);
         this.isIntentionallyClosed = false;
 
         this.ws.onopen = () => {
-          console.log('WebSocket connected');
+          console.log('WebSocket connected successfully');
           this.reconnectAttempts = 0;
+          resolve(); // Resolve immediately when connection opens
           this.emit('status', {
             type: 'status',
             data: { status: 'idle', message: 'Connected to server' },
             timestamp: new Date().toISOString()
           });
-          resolve();
         };
 
         this.ws.onmessage = (event) => {
@@ -42,7 +43,7 @@ export class WebSocketService {
         };
 
         this.ws.onclose = (event) => {
-          console.log('WebSocket disconnected:', event.code, event.reason);
+          console.log('WebSocket onclose triggered:', event.code, event.reason, 'wasClean:', event.wasClean);
           this.ws = null;
           
           this.emit('status', {
@@ -51,21 +52,29 @@ export class WebSocketService {
             timestamp: new Date().toISOString()
           });
 
+          // If connection was never established (code 1006 = abnormal closure), reject the promise
+          if (event.code === 1006 && this.reconnectAttempts === 0) {
+            reject(new Error(`WebSocket connection failed: ${event.reason || 'Connection closed abnormally'}`));
+            return;
+          }
+
           if (!this.isIntentionallyClosed && this.reconnectAttempts < this.maxReconnectAttempts) {
             this.attemptReconnect();
           }
         };
 
         this.ws.onerror = (error) => {
-          console.error('WebSocket error:', error);
+          console.error('WebSocket error event:', error);
+          console.error('WebSocket readyState:', this.ws?.readyState);
           this.emit('error', {
             type: 'error',
             data: { message: 'WebSocket connection error' },
             timestamp: new Date().toISOString()
           });
-          reject(error);
+          // Don't reject here as onclose will handle promise rejection
         };
       } catch (error) {
+        console.error('Failed to create WebSocket:', error);
         reject(error);
       }
     });

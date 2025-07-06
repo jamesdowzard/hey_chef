@@ -1,16 +1,18 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, Users, ChefHat, CheckCircle, Circle, ArrowLeft, ArrowRight, Timer, Thermometer } from 'lucide-react';
+import { Clock, Users, ChefHat, CheckCircle, Circle, ArrowLeft, ArrowRight, Timer, Thermometer, List } from 'lucide-react';
 import { Recipe } from '../types';
 
 interface RecipeViewerProps {
   recipe: Recipe | null;
   onStepChange?: (stepNumber: number) => void;
+  onBackToList?: () => void;
   className?: string;
 }
 
 export const RecipeViewer: React.FC<RecipeViewerProps> = ({
   recipe,
   onStepChange,
+  onBackToList,
   className = ''
 }) => {
   const [checkedIngredients, setCheckedIngredients] = useState<Set<string>>(new Set());
@@ -77,6 +79,19 @@ export const RecipeViewer: React.FC<RecipeViewerProps> = ({
 
   return (
     <div className={`bg-white rounded-lg shadow-lg overflow-hidden ${className}`}>
+      {/* Back to List Button */}
+      {onBackToList && (
+        <div className="p-4 border-b border-gray-200">
+          <button
+            onClick={onBackToList}
+            className="flex items-center space-x-2 text-gray-600 hover:text-gray-800 transition-colors"
+          >
+            <List className="w-4 h-4" />
+            <span className="text-sm font-medium">Back to Recipes</span>
+          </button>
+        </div>
+      )}
+
       {/* Recipe Header */}
       <div className="relative">
         {recipe.imageUrl ? (

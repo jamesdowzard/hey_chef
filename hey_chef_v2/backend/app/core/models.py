@@ -37,6 +37,7 @@ class MessageType(str, Enum):
     AUDIO_DATA = "audio_data"
     AUDIO_END = "audio_end"
     AUDIO_PROCESSED = "audio_processed"
+    AUDIO_STATUS = "audio_status"
     
     # Wake word messages
     WAKE_WORD_DETECTED = "wake_word_detected"
@@ -54,6 +55,7 @@ class MessageType(str, Enum):
     AI_RESPONSE_COMPLETE = "ai_response_complete"
     
     # System messages
+    CONNECTION = "connection"
     CONNECTION_ESTABLISHED = "connection_established"
     CONNECTION_CLOSED = "connection_closed"
     HEARTBEAT = "heartbeat"
@@ -68,6 +70,10 @@ class MessageType(str, Enum):
     # Recipe messages
     RECIPE_LOADED = "recipe_loaded"
     RECIPE_UPDATED = "recipe_updated"
+    
+    # Frontend compatibility messages
+    TEXT_MESSAGE = "text_message"
+    SETTINGS_UPDATED = "settings_updated"
 
 
 class AudioState(str, Enum):

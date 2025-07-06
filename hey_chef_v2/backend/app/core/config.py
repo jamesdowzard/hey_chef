@@ -83,6 +83,9 @@ class Settings:
     # Recipe API settings
     recipe_api_url: str = "http://localhost:3333"
     
+    # Audio processing settings
+    max_recording_duration: int = 30  # Maximum recording duration in seconds
+    
     # File paths
     wake_word_model_path: str = "../../models/porcupine_models/hey_chef.ppn"
     config_directory: str = "../../config"

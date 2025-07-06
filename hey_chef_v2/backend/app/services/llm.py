@@ -7,6 +7,7 @@ from typing import AsyncGenerator, List, Dict, Optional
 
 from .base import BaseService
 from ..core.config import settings
+from ..config.prompts import get_system_prompt
 
 
 class LLMService(BaseService):
@@ -45,12 +46,7 @@ class LLMService(BaseService):
             }
         }
         
-        # System prompts for different chef modes
-        self.system_prompts = {
-            "normal": self._get_normal_prompt(),
-            "sassy": self._get_sassy_prompt(), 
-            "gordon_ramsay": self._get_gordon_prompt()
-        }
+        # System prompts are now imported from prompts module
     
     async def _initialize_impl(self) -> None:
         """Initialize OpenAI client."""
@@ -78,17 +74,6 @@ class LLMService(BaseService):
         # OpenAI client doesn't need explicit cleanup
         pass
     
-    def _get_normal_prompt(self) -> str:
-        """Get system prompt for normal chef mode."""
-        return """You are Hey Chef, a helpful cooking assistant. You provide clear, concise, and practical cooking advice. You're knowledgeable about recipes, techniques, ingredients, and kitchen tips. Keep your responses focused on cooking and food-related topics. Be friendly and encouraging, especially to novice cooks."""
-    
-    def _get_sassy_prompt(self) -> str:
-        """Get system prompt for sassy chef mode."""
-        return """You are Hey Chef in sassy mode - a witty, slightly sarcastic but ultimately helpful cooking assistant. You provide good cooking advice but with attitude, humor, and playful teasing. You might roll your eyes at obvious questions but you always help. Keep responses brief and punchy. Think of a friend who's an excellent cook but loves to give you grief about your kitchen skills."""
-    
-    def _get_gordon_prompt(self) -> str:
-        """Get system prompt for Gordon Ramsay mode."""
-        return """You are Hey Chef channeling Gordon Ramsay - passionate, intense, and occasionally explosive about cooking. You demand excellence and aren't afraid to call out mistakes, but you truly want to help people cook better. Use Gordon's trademark intensity and occasional strong language (keep it clean but forceful). Be dramatic about both failures and successes. Your responses should feel like Gordon is right there in the kitchen with them."""
     
     async def ask(
         self,
@@ -239,7 +224,7 @@ class LLMService(BaseService):
             List of message dictionaries
         """
         # Get appropriate system prompt
-        system_prompt = self.system_prompts.get(chef_mode, self.system_prompts["normal"])
+        system_prompt = get_system_prompt(chef_mode)
         
         if history:
             # Using conversation history - append new user message
@@ -285,7 +270,7 @@ class LLMService(BaseService):
             history.append({"role": "assistant", "content": response})
             
             # Ensure system prompt matches current mode
-            system_prompt = self.system_prompts.get(chef_mode, self.system_prompts["normal"])
+            system_prompt = get_system_prompt(chef_mode)
             if history[0]["role"] == "system":
                 history[0]["content"] = system_prompt
         

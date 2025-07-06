@@ -3,10 +3,12 @@ import { ChefHat, Wifi, WifiOff, Menu, X } from 'lucide-react';
 import { VoiceController } from './components/VoiceController';
 import { ChatInterface } from './components/ChatInterface';
 import { RecipeViewer } from './components/RecipeViewer';
+import { RecipeList } from './components/RecipeList';
 import { SettingsPanel } from './components/SettingsPanel';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useRecipes } from './hooks/useRecipes';
 import { AppSettings, ChatMessage } from './types';
+import { apiService } from './services/api';
 
 const defaultSettings: AppSettings = {
   audio: {
@@ -36,19 +38,68 @@ export const App: React.FC = () => {
   const [settings, setSettings] = useState<AppSettings>(defaultSettings);
   const [activeTab, setActiveTab] = useState<'chat' | 'recipe' | 'settings'>('chat');
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [recipeView, setRecipeView] = useState<'list' | 'detail'>('list');
+
+  // Health check states
+  const [apiKeyValid, setApiKeyValid] = useState<boolean | null>(null);
+  const [audioServiceHealthy, setAudioServiceHealthy] = useState<boolean | null>(null);
+  const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'connecting'>('disconnected');
 
   const { subscribe, unsubscribe, connect, disconnect, sendTextMessage, startAudioPipeline, stopAudioPipeline, loadRecipe } = useWebSocket();
-  const { currentRecipe, setRecipeStep } = useRecipes();
+  const { 
+    recipes, 
+    currentRecipe, 
+    categories,
+    hasMore,
+    loadRecipe: selectRecipe,
+    loadMoreRecipes,
+    searchRecipes,
+    filterByCategory,
+    setRecipeStep 
+  } = useRecipes();
+
+  // Health check functions
+  const checkApiKeyHealth = useCallback(async () => {
+    try {
+      const result = await apiService.validateApiKeys();
+      setApiKeyValid(result.openai_valid || false);
+    } catch (error) {
+      console.error('API key validation failed:', error);
+      setApiKeyValid(false);
+    }
+  }, []);
+
+  const checkAudioServiceHealth = useCallback(async () => {
+    try {
+      const result = await apiService.getAudioHealth();
+      setAudioServiceHealthy(result.status === 'healthy');
+    } catch (error) {
+      console.error('Audio service health check failed:', error);
+      setAudioServiceHealthy(false);
+    }
+  }, []);
+
+  const checkOverallHealth = useCallback(async () => {
+    try {
+      await apiService.healthCheck();
+      // If we reach here, backend is responding
+    } catch (error) {
+      console.error('General health check failed:', error);
+    }
+  }, []);
 
   // Initialize WebSocket connection
   useEffect(() => {
     const initConnection = async () => {
       try {
+        setConnectionStatus('connecting');
         await connect();
         setIsConnected(true);
+        setConnectionStatus('connected');
       } catch (error) {
         console.error('Failed to connect to WebSocket:', error);
         setIsConnected(false);
+        setConnectionStatus('disconnected');
       }
     };
 
@@ -56,15 +107,39 @@ export const App: React.FC = () => {
 
     return () => {
       disconnect();
+      setConnectionStatus('disconnected');
     };
   }, [connect, disconnect]);
+
+  // Perform initial health checks and set up intervals
+  useEffect(() => {
+    // Initial health checks
+    checkOverallHealth();
+    checkApiKeyHealth();
+    checkAudioServiceHealth();
+
+    // Set up health check intervals
+    const healthCheckInterval = setInterval(() => {
+      checkOverallHealth();
+      checkApiKeyHealth();
+      checkAudioServiceHealth();
+    }, 30000); // Check every 30 seconds
+
+    return () => {
+      clearInterval(healthCheckInterval);
+    };
+  }, [checkOverallHealth, checkApiKeyHealth, checkAudioServiceHealth]);
 
   // Handle WebSocket messages
   const handleConnection = useCallback((message: any) => {
     const { status, session_id } = message.data;
     if (status === 'connected') {
       setIsConnected(true);
+      setConnectionStatus('connected');
       console.log('Connected with session ID:', session_id);
+    } else if (status === 'disconnected') {
+      setIsConnected(false);
+      setConnectionStatus('disconnected');
     }
   }, []);
 
@@ -111,6 +186,7 @@ export const App: React.FC = () => {
     setChatMessages(prev => [...prev, errorMessage]);
     setIsProcessing(false);
     setIsConnected(false);
+    setConnectionStatus('disconnected');
   }, []);
 
   // Subscribe to WebSocket events
@@ -148,6 +224,13 @@ export const App: React.FC = () => {
     // Save to localStorage
     localStorage.setItem('heyChefSettings', JSON.stringify(newSettings));
   }, []);
+
+  // Handle recipe selection
+  const handleRecipeSelect = useCallback((recipe: any) => {
+    selectRecipe(recipe.id);
+    setRecipeView('detail');
+    loadRecipe(recipe); // Notify WebSocket
+  }, [selectRecipe, loadRecipe]);
 
   // Load settings from localStorage on mount
   useEffect(() => {
@@ -287,17 +370,37 @@ export const App: React.FC = () => {
             )}
 
             {activeTab === 'recipe' && (
-              <RecipeViewer
-                recipe={currentRecipe.data}
-                onStepChange={setRecipeStep}
-                className="h-[600px] overflow-y-auto"
-              />
+              <>
+                {recipeView === 'list' ? (
+                  <RecipeList
+                    recipes={recipes}
+                    currentRecipe={currentRecipe.data}
+                    categories={categories}
+                    onRecipeSelect={handleRecipeSelect}
+                    onLoadMore={loadMoreRecipes}
+                    onSearch={searchRecipes}
+                    onCategoryFilter={filterByCategory}
+                    hasMore={hasMore}
+                    className="h-[600px] overflow-y-auto"
+                  />
+                ) : (
+                  <RecipeViewer
+                    recipe={currentRecipe.data}
+                    onStepChange={setRecipeStep}
+                    onBackToList={() => setRecipeView('list')}
+                    className="h-[600px] overflow-y-auto"
+                  />
+                )}
+              </>
             )}
 
             {activeTab === 'settings' && (
               <SettingsPanel
                 settings={settings}
                 onSettingsChange={handleSettingsChange}
+                connectionStatus={connectionStatus}
+                apiKeyValid={apiKeyValid}
+                audioServiceHealthy={audioServiceHealthy}
                 className="h-[600px] overflow-y-auto"
               />
             )}

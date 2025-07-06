@@ -8,11 +8,12 @@ pydantic-settings==2.1.0
 python-dotenv==1.0.0
 pyyaml==6.0.1
 httpx==0.25.2
+notion-client==2.2.1
 
 # Audio Processing
 pvporcupine==3.0.0
 pyaudio==0.2.14
-openai==1.3.7
+openai==1.51.0
 openai-whisper==20231117
 sounddevice==0.4.6
 webrtcvad==2.0.10

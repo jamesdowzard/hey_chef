@@ -262,7 +262,7 @@ async def get_available_models(settings: Settings = Depends(get_settings)):
             "tts_voices": {
                 "macos": settings.audio.macos_voice,
                 "openai": settings.audio.external_voice,
-                "current": settings.audio.external_voice if settings.audio.use_external_tts else settings.audio.macos_voice
+                "current": settings.audio.external_voice if settings.use_external_tts else settings.audio.macos_voice
             },
             "llm_models": settings.llm.available_models,
             "current_llm_model": settings.llm.model,
@@ -285,11 +285,13 @@ async def validate_api_keys(settings: Settings = Depends(get_settings)):
         
         # Check OpenAI API key
         try:
-            import openai
-            openai.api_key = settings.openai_api_key
-            # Simple API call to validate key
-            llm_service = create_llm_service()
-            validation_results["openai"] = "valid"
+            if not settings.openai_api_key:
+                validation_results["openai"] = "invalid: API key not set"
+            else:
+                # Try to create LLM service
+                llm_service = create_llm_service()
+                async with llm_service:
+                    validation_results["openai"] = "valid"
         except Exception as e:
             validation_results["openai"] = f"invalid: {str(e)}"
         
@@ -306,6 +308,8 @@ async def validate_api_keys(settings: Settings = Depends(get_settings)):
         return {
             "status": "success" if all_valid else "warning",
             "message": "All API keys valid" if all_valid else "Some API keys are invalid",
+            "openai_valid": "valid" in validation_results.get("openai", ""),
+            "picovoice_valid": "valid" in validation_results.get("picovoice", ""),
             "api_keys": validation_results
         }
         

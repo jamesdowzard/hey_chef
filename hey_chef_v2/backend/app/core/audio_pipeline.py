@@ -179,9 +179,13 @@ class AudioPipelineManager:
             if not pipeline_state:
                 raise AudioPipelineError("No pipeline state found for session")
             
-            user_session = await self.session_manager.get_session(session_id)
-            if user_session:
-                sensitivity = sensitivity or user_session.settings.wake_word_sensitivity
+            # Get user session for sensitivity (if session manager available)
+            if self.session_manager:
+                user_session = await self.session_manager.get_session(session_id)
+                if user_session:
+                    sensitivity = sensitivity or user_session.settings.wake_word_sensitivity
+                else:
+                    sensitivity = sensitivity or self.settings.audio.wake_word_sensitivity
             else:
                 sensitivity = sensitivity or self.settings.audio.wake_word_sensitivity
             
@@ -303,10 +307,15 @@ class AudioPipelineManager:
             await self.transition_state(session_id, AudioState.AI_PROCESSING, 
                                       "generating_ai_response")
             
-            # Get user session for context
-            user_session = await self.session_manager.get_session(session_id)
+            # Get user session for context (if session manager available)
+            user_session = None
+            if self.session_manager:
+                user_session = await self.session_manager.get_session(session_id)
+            
             if not user_session:
-                raise AudioPipelineError("User session not found")
+                # Use default session settings when no session manager
+                from .models import UserSession
+                user_session = UserSession()
             
             # Prepare AI request
             chef_mode = user_session.settings.chef_mode
@@ -342,13 +351,14 @@ class AudioPipelineManager:
                 )
                 await self.websocket_callback(session_id, ai_message)
             
-            # Update conversation history
-            await self.session_manager.add_conversation_message(
-                session_id, "user", user_message
-            )
-            await self.session_manager.add_conversation_message(
-                session_id, "assistant", ai_response.response_text, chef_mode
-            )
+            # Update conversation history (if session manager available)
+            if self.session_manager:
+                await self.session_manager.add_conversation_message(
+                    session_id, "user", user_message
+                )
+                await self.session_manager.add_conversation_message(
+                    session_id, "assistant", ai_response.response_text, chef_mode
+                )
             
             # Start TTS if enabled
             if user_session.settings.tts_enabled:
@@ -370,10 +380,15 @@ class AudioPipelineManager:
             await self.transition_state(session_id, AudioState.GENERATING_SPEECH, 
                                       "text_to_speech")
             
-            # Get user session for TTS preferences
-            user_session = await self.session_manager.get_session(session_id)
+            # Get user session for TTS preferences (if session manager available)
+            user_session = None
+            if self.session_manager:
+                user_session = await self.session_manager.get_session(session_id)
+            
             if not user_session:
-                raise AudioPipelineError("User session not found")
+                # Use default session settings when no session manager
+                from .models import UserSession
+                user_session = UserSession()
             
             # Prepare TTS request
             tts_request = TTSRequest(

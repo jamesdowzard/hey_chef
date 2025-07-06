@@ -1,0 +1,62 @@
+--- a/frontend/src/services/websocket.ts
++++ b/frontend/src/services/websocket.ts
+@@ -17,6 +17,7 @@
+ 
+   connect(): Promise<void> {
+     return new Promise((resolve, reject) => {
++      console.log('Attempting WebSocket connection to:', this.url);
+       try {
+         this.ws = new WebSocket(this.url);
+         this.isIntentionallyClosed = false;
+@@ -24,6 +25,7 @@
+         this.ws.onopen = () => {
+           console.log('WebSocket connected');
+           this.reconnectAttempts = 0;
++          resolve(); // Move resolve before emit to avoid timing issues
+           this.emit('status', {
+             type: 'status',
+             data: { status: 'idle', message: 'Connected to server' },
+@@ -31,7 +33,6 @@
+           });
+-          resolve();
+         };
+ 
+         this.ws.onmessage = (event) => {
+@@ -43,6 +44,7 @@
+         };
+ 
+         this.ws.onclose = (event) => {
++          console.log('WebSocket onclose triggered:', event.code, event.reason, 'wasClean:', event.wasClean);
+           this.ws = null;
+           
+           this.emit('status', {
+@@ -51,6 +53,11 @@
+             timestamp: new Date().toISOString()
+           });
+ 
++          // If connection was never established, reject the promise
++          if (event.code === 1006 && this.reconnectAttempts === 0) {
++            reject(new Error(`WebSocket connection failed: ${event.reason || 'Connection closed abnormally'}`));
++          }
++
+           if (!this.isIntentionallyClosed && this.reconnectAttempts < this.maxReconnectAttempts) {
+             this.attemptReconnect();
+           }
+@@ -58,11 +65,13 @@
+ 
+         this.ws.onerror = (error) => {
+           console.error('WebSocket error:', error);
++          console.error('WebSocket readyState:', this.ws?.readyState);
+           this.emit('error', {
+             type: 'error',
+             data: { message: 'WebSocket connection error' },
+             timestamp: new Date().toISOString()
+           });
++          // Don't reject here as onclose will handle it
+-          reject(error);
+         };
+       } catch (error) {
++        console.error('Failed to create WebSocket:', error);
+         reject(error);
+       }
+     });

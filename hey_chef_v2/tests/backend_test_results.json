@@ -1,0 +1,254 @@
+[
+  {
+    "test": "Health Endpoint",
+    "success": true,
+    "details": {
+      "status_code": 200,
+      "response_data": {
+        "status": "healthy",
+        "service": "hey-chef-v2",
+        "version": "2.0.0",
+        "environment": "development"
+      },
+      "has_expected_fields": true,
+      "expected_fields": [
+        "status",
+        "service",
+        "version",
+        "environment"
+      ]
+    },
+    "error": null
+  },
+  {
+    "test": "Detailed Health Endpoint",
+    "success": true,
+    "details": {
+      "status_code": 200,
+      "has_services": true,
+      "has_configuration": true,
+      "services": {
+        "audio_pipeline": "healthy",
+        "wake_word": "healthy",
+        "speech_to_text": "healthy",
+        "text_to_speech": "healthy",
+        "llm": "healthy"
+      },
+      "configuration": {
+        "whisper_model": "tiny",
+        "llm_model": "gpt-4o",
+        "wake_word_sensitivity": 0.7
+      }
+    },
+    "error": null
+  },
+  {
+    "test": "Audio Health Endpoint",
+    "success": true,
+    "details": {
+      "status_code": 200,
+      "overall_status": "healthy",
+      "services": {
+        "wake_word": "healthy",
+        "speech_to_text": "healthy",
+        "text_to_speech": "healthy",
+        "llm": "healthy"
+      },
+      "configuration": {
+        "whisper_model": "tiny",
+        "wake_word_sensitivity": 0.7,
+        "sample_rate": 16000,
+        "llm_model": "gpt-4o"
+      },
+      "has_required_fields": true
+    },
+    "error": null
+  },
+  {
+    "test": "API Key Validation",
+    "success": true,
+    "details": {
+      "status_code": 200,
+      "openai_valid": true,
+      "picovoice_valid": true,
+      "status": "success",
+      "message": "All API keys valid",
+      "api_keys": {
+        "openai": "valid",
+        "picovoice": "valid"
+      },
+      "has_required_fields": true
+    },
+    "error": null
+  },
+  {
+    "test": "WebSocket Health",
+    "success": true,
+    "details": {
+      "status_code": 200,
+      "status": "healthy",
+      "active_connections": 0,
+      "total_sessions": 0,
+      "has_required_fields": true
+    },
+    "error": null
+  },
+  {
+    "test": "Recipe Endpoints",
+    "success": true,
+    "details": {
+      "recipes_list": {
+        "success": true,
+        "status_code": 200,
+        "has_recipes": true,
+        "data": {
+          "recipes": [
+            {
+              "source": "",
+              "notes": "",
+              "meal type": [
+                "dinner"
+              ],
+              "status": [],
+              "title": "Easy Thai Red Chicken Curry",
+              "id": "21c5e74d-5097-8048-87dd-c64383ab15c5"
+            },
+            {
+              "source": "",
+              "notes": "",
+              "meal type": [],
+              "status": [],
+              "title": "Baked Tomato and Bacon Risotto",
+              "id": "21c5e74d-5097-80bf-81b5-d7a4e9f80975"
+            },
+            {
+              "source": "",
+              "notes": "",
+              "meal type": [],
+              "status": [],
+              "title": "Herby Tomato & Tuna Pasta Soup",
+              "id": "21a5e74d-5097-802e-a7e0-c663492c3349"
+            },
+            {
+              "source": "",
+              "notes": "",
+              "meal type": [],
+              "status": [],
+              "title": "Pantry Olive & Garlic Pasta",
+              "id": "2105e74d-5097-80a4-8c04-ed1b02f72f1e"
+            },
+            {
+              "source": "",
+              "notes": "",
+              "meal type": [],
+              "status": [],
+              "title": "Easy One-Pot Pasta Soup (Italian-style)",
+              "id": "2095e74d-5097-80d6-9637-ed198ba5835f"
+            },
+            {
+              "source": "",
+              "notes": "",
+              "meal type": [],
+              "status": [],
+              "title": "Polenta Chips (Air Fryer or Oven)",
+              "id": "1fa5e74d-5097-801f-a395-e5ac87eb1070"
+            },
+            {
+              "source": "",
+              "notes": "",
+              "meal type": [
+                "dessert"
+              ],
+              "status": [],
+              "title": "apple crumble",
+              "id": "1f95e74d-5097-80bc-813a-ef0f6c07a7ce"
+            },
+            {
+              "source": "",
+              "notes": "",
+              "meal type": [
+                "dinner"
+              ],
+              "status": [],
+              "title": "Tuscan Beans with Sausage and Marjoram/Oregano",
+              "id": "1f95e74d-5097-8099-b1c7-f8f61026681d"
+            },
+            {
+              "source": "",
+              "notes": "",
+              "meal type": [],
+              "status": [],
+              "title": "Yorkshire Puddings",
+              "id": "1e75e74d-5097-8065-8dfe-e527ac62909d"
+            },
+            {
+              "source": "",
+              "notes": "",
+              "meal type": [
+                "sauce"
+              ],
+              "status": [],
+              "title": "Roast Chicken Gravy",
+              "id": "1e75e74d-5097-8027-9686-c9d6c7036908"
+            }
+          ],
+          "total": 10,
+          "page": 1,
+          "limit": 10
+        }
+      },
+      "categories_list": {
+        "success": true,
+        "status_code": 200,
+        "has_categories": true,
+        "data": {
+          "categories": [
+            "breakfast",
+            "lunch",
+            "dinner",
+            "snack",
+            "dessert",
+            "side",
+            "sauce"
+          ]
+        }
+      },
+      "health_check": {
+        "success": true,
+        "status_code": 200,
+        "data": {
+          "status": "healthy",
+          "notion_api": "available",
+          "notion_url": "http://localhost:3333"
+        }
+      }
+    },
+    "error": null
+  },
+  {
+    "test": "Audio Models Endpoint",
+    "success": false,
+    "details": {
+      "status_code": 500,
+      "response_data": {
+        "error": "Failed to get model information: 'AudioSettings' object has no attribute 'use_external_tts'",
+        "status_code": 500,
+        "path": "http://localhost:8000/api/audio/models"
+      }
+    },
+    "error": "Invalid response format"
+  },
+  {
+    "test": "CORS Headers",
+    "success": false,
+    "details": {
+      "preflight_status": 200,
+      "regular_status": 200,
+      "access_control_origin": null,
+      "access_control_methods": null,
+      "access_control_headers": null,
+      "has_cors_headers": false
+    },
+    "error": "CORS headers not properly configured"
+  }
+]

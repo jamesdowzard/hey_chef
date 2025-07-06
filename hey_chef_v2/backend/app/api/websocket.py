@@ -94,10 +94,7 @@ async def get_settings() -> Settings:
     return Settings()
 
 @router.websocket("/audio")
-async def websocket_audio_endpoint(
-    websocket: WebSocket,
-    settings: Settings = Depends(get_settings)
-):
+async def websocket_audio_endpoint(websocket: WebSocket):
     """
     Main WebSocket endpoint for audio processing communication.
     
@@ -107,6 +104,8 @@ async def websocket_audio_endpoint(
     - Voice command processing
     - Recipe context management
     """
+    # Create settings instance
+    settings = Settings()
     session_id = await manager.connect(websocket)
     
     try:
@@ -176,6 +175,12 @@ async def handle_websocket_message(
         await handle_recipe_load(session_id, message)
     elif message.type == "settings_update":
         await handle_settings_update(session_id, message)
+    elif message.type == "connection":
+        await handle_connection_message(session_id, message)
+    elif message.type == "text_message":
+        await handle_text_message(session_id, message)
+    elif message.type == "heartbeat":
+        await handle_heartbeat(session_id, message)
     else:
         logger.warning(f"Unknown message type from {session_id}: {message.type}")
         error_msg = WebSocketMessage(
@@ -204,13 +209,22 @@ async def handle_audio_start(session_id: str, message: WebSocketMessage, setting
         tts_service = create_tts_service()
         llm_service = create_llm_service()
         
-        pipeline = AudioPipelineManager(
+        # Create pipeline with settings only
+        pipeline = AudioPipelineManager(settings)
+        
+        # Inject services using the proper method
+        pipeline.inject_services(
             wake_word_service=wake_word_service,
             stt_service=stt_service,
-            llm_service=llm_service,
+            ai_service=llm_service,
             tts_service=tts_service,
-            websocket_callback=lambda status, data: asyncio.create_task(
-                send_audio_status(session_id, status, data)
+            session_manager=None  # TODO: Implement session manager
+        )
+        
+        # Set WebSocket callback
+        pipeline.set_websocket_callback(
+            lambda session_id, message: asyncio.create_task(
+                send_audio_status(session_id, message.type, message.model_dump())
             )
         )
         
@@ -311,6 +325,56 @@ async def send_audio_status(session_id: str, status: str, message: str):
         timestamp=asyncio.get_event_loop().time()
     )
     await manager.send_message(session_id, status_msg)
+
+async def handle_connection_message(session_id: str, message: WebSocketMessage):
+    """Handle connection status messages."""
+    try:
+        response_msg = WebSocketMessage(
+            type="connection_established",
+            data={"status": "acknowledged", "session_id": session_id},
+            timestamp=asyncio.get_event_loop().time()
+        )
+        await manager.send_message(session_id, response_msg)
+        logger.debug(f"Connection message acknowledged for session {session_id}")
+        
+    except Exception as e:
+        logger.error(f"Failed to handle connection message for {session_id}: {e}")
+
+async def handle_text_message(session_id: str, message: WebSocketMessage):
+    """Handle text messages from client."""
+    try:
+        # Extract text from message data
+        text_content = message.data.get("text", "") if message.data else ""
+        
+        # Echo back for now (can be extended for AI processing)
+        response_msg = WebSocketMessage(
+            type="text_message",
+            data={
+                "response": f"Received: {text_content}",
+                "original": text_content,
+                "timestamp": asyncio.get_event_loop().time()
+            },
+            timestamp=asyncio.get_event_loop().time()
+        )
+        await manager.send_message(session_id, response_msg)
+        logger.debug(f"Text message processed for session {session_id}")
+        
+    except Exception as e:
+        logger.error(f"Failed to handle text message for {session_id}: {e}")
+
+async def handle_heartbeat(session_id: str, message: WebSocketMessage):
+    """Handle heartbeat messages to keep connection alive."""
+    try:
+        response_msg = WebSocketMessage(
+            type="heartbeat",
+            data={"status": "alive", "timestamp": asyncio.get_event_loop().time()},
+            timestamp=asyncio.get_event_loop().time()
+        )
+        await manager.send_message(session_id, response_msg)
+        logger.debug(f"Heartbeat acknowledged for session {session_id}")
+        
+    except Exception as e:
+        logger.error(f"Failed to handle heartbeat for {session_id}: {e}")
 
 # Health check for WebSocket connections
 @router.get("/health")

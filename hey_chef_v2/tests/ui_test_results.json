@@ -1,0 +1,62 @@
+[
+  {
+    "test": "Initial Page Load",
+    "success": true,
+    "details": {
+      "title_found": true,
+      "nav_found": true,
+      "chat_tab": true,
+      "recipe_tab": true,
+      "settings_tab": true
+    },
+    "error": null
+  },
+  {
+    "test": "WebSocket Connection Status",
+    "success": true,
+    "details": {
+      "connection_indicator_found": true,
+      "has_status": true,
+      "is_connected": true,
+      "status": "Connected"
+    },
+    "error": null
+  },
+  {
+    "test": "Settings Health Checks",
+    "success": true,
+    "details": {
+      "system_info_found": true,
+      "connection_status_found": true,
+      "api_key_status_found": true,
+      "audio_services_found": true,
+      "valid_indicators": 2,
+      "invalid_indicators": 0,
+      "checking_indicators": 0,
+      "healthy_indicators": 1,
+      "has_status_indicators": true
+    },
+    "error": null
+  },
+  {
+    "test": "Recipe List Functionality",
+    "success": true,
+    "details": {
+      "recipe_section_found": true,
+      "search_box_found": true,
+      "category_filter_found": true,
+      "recipe_count": 10,
+      "has_recipes": true,
+      "is_loading": false,
+      "has_error": false,
+      "no_recipes": false
+    },
+    "error": null
+  },
+  {
+    "test": "Recipe Selection and Detail View",
+    "success": false,
+    "details": {},
+    "error": "Page.query_selector: Unexpected token \"*=\" while parsing css selector \"[class*=\"Clock\"], text*=\"min\", text*=\"hour\"\". Did you mean to CSS.escape it?"
+  }
+]

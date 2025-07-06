@@ -1,0 +1,17 @@
+{
+  "timestamp": "2025-07-04",
+  "frontend_url": "http://localhost:3000",
+  "backend_url": "http://localhost:8000",
+  "issues_found": [
+    "Console warning: WebSocket connection to 'ws://localhost:8000/ws/audio' failed: WebSocket is closed before the connection is established.",
+    "Console error: WebSocket error: Event",
+    "Console error: Failed to connect to WebSocket: Event",
+    "Console warning: WebSocket connection to 'ws://localhost:8000/ws/audio' failed: WebSocket is closed before the connection is established.",
+    "Console error: WebSocket error: Event",
+    "Console error: Failed to connect to WebSocket: Event",
+    "No recipe elements found on page"
+  ],
+  "suggested_fixes": [
+    "Fix WebSocket connection issues:\n  - Check if backend WebSocket endpoint is correct (/ws/audio)\n  - Verify CORS settings allow WebSocket connections\n  - Check for WebSocket URL construction in frontend code\n  - Ensure WebSocket server is properly handling connections"
+  ]
+}

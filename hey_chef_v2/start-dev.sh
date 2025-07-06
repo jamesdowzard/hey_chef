@@ -12,6 +12,36 @@ if [[ ! -d "backend" ]] || [[ ! -d "frontend" ]]; then
     exit 1
 fi
 
+# Function to kill processes by port safely
+cleanup_port() {
+    local port=$1
+    local service_name=$2
+    
+    local pids=$(lsof -ti :$port 2>/dev/null)
+    if [[ -n "$pids" ]]; then
+        echo "🧹 Cleaning up existing $service_name processes on port $port..."
+        kill $pids 2>/dev/null
+        sleep 1
+        
+        # Force kill if still running
+        local remaining_pids=$(lsof -ti :$port 2>/dev/null)
+        if [[ -n "$remaining_pids" ]]; then
+            kill -9 $remaining_pids 2>/dev/null
+        fi
+        echo "✅ Port $port cleaned up"
+    fi
+}
+
+# Pre-startup cleanup
+echo "🧹 Cleaning up any existing processes..."
+cleanup_port 3000 "Frontend"
+cleanup_port 3001 "Frontend (backup)"
+cleanup_port 8000 "Backend"
+
+# Additional cleanup for any hanging processes
+pkill -f "hey_chef.*main\.py" 2>/dev/null || true
+pkill -f "vite.*hey-chef-v2-frontend" 2>/dev/null || true
+
 # Function to check if a command exists
 command_exists() {
     command -v "$1" >/dev/null 2>&1
@@ -95,9 +125,35 @@ echo "Press Ctrl+C to stop both servers"
 cleanup() {
     echo ""
     echo "🛑 Shutting down Hey Chef v2..."
-    kill $BACKEND_PID 2>/dev/null
-    kill $FRONTEND_PID 2>/dev/null
-    echo "✅ Servers stopped"
+    
+    # Kill the specific PIDs we started
+    if [[ -n "$BACKEND_PID" ]] && kill -0 $BACKEND_PID 2>/dev/null; then
+        echo "⏹️  Stopping backend (PID: $BACKEND_PID)..."
+        kill $BACKEND_PID 2>/dev/null
+        sleep 2
+        # Force kill if still running
+        if kill -0 $BACKEND_PID 2>/dev/null; then
+            kill -9 $BACKEND_PID 2>/dev/null
+        fi
+    fi
+    
+    if [[ -n "$FRONTEND_PID" ]] && kill -0 $FRONTEND_PID 2>/dev/null; then
+        echo "⏹️  Stopping frontend (PID: $FRONTEND_PID)..."
+        kill $FRONTEND_PID 2>/dev/null
+        sleep 2
+        # Force kill if still running
+        if kill -0 $FRONTEND_PID 2>/dev/null; then
+            kill -9 $FRONTEND_PID 2>/dev/null
+        fi
+    fi
+    
+    # Additional cleanup for any remaining processes
+    cleanup_port 3000 "Frontend"
+    cleanup_port 3001 "Frontend (backup)"
+    cleanup_port 8000 "Backend"
+    
+    echo "✅ Hey Chef v2 development environment stopped"
+    echo "💡 If you still see port conflicts, run: ./stop-dev.sh"
     exit 0
 }
 
