@@ -49,7 +49,7 @@ class TTSService(BaseService):
         self.macos_voice = macos_voice or settings.audio.macos_voice
         self.external_voice = external_voice or settings.audio.external_voice
         self.macos_rate = macos_rate or settings.audio.speech_rate
-        self.use_external = use_external if use_external is not None else settings.use_external_tts
+        self.use_external = use_external if use_external is not None else settings.audio.use_external_tts
         
         # OpenAI client (lazy initialization)
         self.openai_client = None

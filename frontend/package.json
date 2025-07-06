@@ -9,7 +9,15 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit",
+    "test": "vitest",
+    "test:ui": "vitest --ui",
+    "test:run": "vitest run",
+    "test:coverage": "vitest run --coverage",
+    "test:e2e": "playwright test --config=../tests/frontend/playwright.config.ts",
+    "test:e2e:ui": "playwright test --config=../tests/frontend/playwright.config.ts --ui",
+    "test:e2e:debug": "playwright test --config=../tests/frontend/playwright.config.ts --debug",
+    "test:e2e:report": "playwright show-report ../tests/frontend/test-results"
   },
   "dependencies": {
     "@headlessui/react": "^1.7.17",
@@ -26,6 +34,10 @@
     "zustand": "^4.4.7"
   },
   "devDependencies": {
+    "@playwright/test": "^1.40.0",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.3.0",
+    "@testing-library/user-event": "^14.6.1",
     "@types/node": "^20.10.4",
     "@typescript-eslint/eslint-plugin": "^6.13.2",
     "@typescript-eslint/parser": "^6.13.2",
@@ -34,10 +46,12 @@
     "eslint": "^8.55.0",
     "eslint-plugin-react-hooks": "^4.6.0",
     "eslint-plugin-react-refresh": "^0.4.5",
+    "jsdom": "^26.1.0",
     "postcss": "^8.4.32",
     "tailwindcss": "^3.3.6",
     "typescript": "^5.3.3",
-    "vite": "^5.0.8"
+    "vite": "^5.0.8",
+    "vitest": "^3.2.4"
   },
   "browserslist": {
     "production": [

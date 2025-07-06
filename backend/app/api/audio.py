@@ -262,7 +262,7 @@ async def get_available_models(settings: Settings = Depends(get_settings)):
             "tts_voices": {
                 "macos": settings.audio.macos_voice,
                 "openai": settings.audio.external_voice,
-                "current": settings.audio.external_voice if settings.use_external_tts else settings.audio.macos_voice
+                "current": settings.audio.external_voice if settings.audio.use_external_tts else settings.audio.macos_voice
             },
             "llm_models": settings.llm.available_models,
             "current_llm_model": settings.llm.model,

@@ -4,6 +4,7 @@ Demonstrates how to test the async services with proper mocking.
 """
 import asyncio
 import pytest
+import pytest_asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 from typing import AsyncGenerator
 
@@ -16,11 +17,12 @@ from .llm import LLMService
 class TestWakeWordService:
     """Test cases for WakeWordService."""
     
-    @pytest.fixture
+    @pytest_asyncio.fixture
     async def mock_wake_word_service(self):
         """Create a mock wake word service for testing."""
         with patch('pvporcupine.create') as mock_porcupine, \
-             patch('pyaudio.PyAudio') as mock_pyaudio:
+             patch('pyaudio.PyAudio') as mock_pyaudio, \
+             patch('pathlib.Path.is_file', return_value=True):
             
             # Configure mocks
             mock_porcupine_instance = MagicMock()
@@ -80,7 +82,7 @@ class TestWakeWordService:
 class TestSTTService:
     """Test cases for STTService."""
     
-    @pytest.fixture
+    @pytest_asyncio.fixture
     async def mock_stt_service(self):
         """Create a mock STT service for testing."""
         with patch('webrtcvad.Vad') as mock_vad, \
@@ -111,7 +113,7 @@ class TestSTTService:
         
         with patch('tempfile.NamedTemporaryFile'), \
              patch('wave.open'), \
-             patch('os.path.exists', return_value=True):
+             patch('pathlib.Path.is_file', return_value=True):
             
             result = await service.transcribe_file("/fake/path.wav")
             assert result == "Hello world"
@@ -120,7 +122,7 @@ class TestSTTService:
 class TestTTSService:
     """Test cases for TTSService."""
     
-    @pytest.fixture
+    @pytest_asyncio.fixture
     async def mock_tts_service(self):
         """Create a mock TTS service for testing."""
         service = TTSService(use_external=False)  # Use macOS TTS for testing
@@ -165,7 +167,7 @@ class TestTTSService:
 class TestLLMService:
     """Test cases for LLMService."""
     
-    @pytest.fixture
+    @pytest_asyncio.fixture
     async def mock_llm_service(self):
         """Create a mock LLM service for testing."""
         with patch.object(LLMService, '_initialize_impl'):

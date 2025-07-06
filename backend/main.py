@@ -69,10 +69,13 @@ app.add_middleware(
         "http://localhost:3001",  # Alternative React port
         "http://127.0.0.1:3000",
         "http://127.0.0.1:3001",
+        "http://localhost:5173",  # Vite default port
+        "http://127.0.0.1:5173",
     ] if settings.environment == "development" else settings.allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 

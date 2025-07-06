@@ -6,8 +6,9 @@ import uuid
 from datetime import datetime, timezone
 from enum import Enum
 from typing import List, Optional, Dict, Any, Union
-from pydantic import BaseModel, Field, validator, root_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic.types import UUID4
+from pydantic import ConfigDict
 
 
 # Base Models
@@ -16,10 +17,11 @@ class TimestampedModel(BaseModel):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: Optional[datetime] = None
     
-    class Config:
-        json_encoders = {
+    model_config = ConfigDict(
+        json_encoders={
             datetime: lambda v: v.isoformat()
         }
+    )
 
 
 class BaseResponse(BaseModel):
@@ -355,7 +357,8 @@ class UserSession(TimestampedModel):
     last_activity: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     metadata: Dict[str, Any] = Field(default_factory=dict)
     
-    @validator('conversation_history')
+    @field_validator('conversation_history')
+    @classmethod
     def limit_history_size(cls, v):
         # Keep only last 50 messages to prevent memory bloat
         return v[-50:] if len(v) > 50 else v
@@ -484,7 +487,7 @@ class ConnectionInfo(BaseModel):
 # Batch Processing Models
 class BatchAudioRequest(BaseModel):
     """Batch audio processing request"""
-    requests: List[AudioProcessingRequest] = Field(max_items=10)
+    requests: List[AudioProcessingRequest] = Field(max_length=10)
 
 
 class BatchAudioResponse(BaseResponse):

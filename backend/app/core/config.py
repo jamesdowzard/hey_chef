@@ -20,6 +20,7 @@ class AudioSettings:
     macos_voice: str = "Samantha"
     external_voice: str = "alloy"
     speech_rate: int = 219
+    use_external_tts: bool = True
 
 
 @dataclass  
@@ -44,6 +45,15 @@ class LoggingSettings:
     """Logging settings for compatibility"""
     logs_directory: str = "logs"
     log_level: str = "INFO"
+    default_log_level: str = "INFO"
+    api_log_level: str = "INFO"
+    audio_log_level: str = "INFO"
+    session_log_level: str = "INFO"
+    session_logs_directory: str = "logs/sessions"
+    audio_logs_directory: str = "logs/audio"
+    api_logs_directory: str = "logs/api"
+    archived_logs_directory: str = "logs/archived"
+    log_archive_days: int = 30
     max_session_logs: int = 5
 
 
@@ -54,6 +64,7 @@ class Settings:
     # App settings
     app_name: str = "Hey Chef v2 API"
     environment: str = "development"
+    debug: bool = True
     host: str = "0.0.0.0"
     port: int = 8000
     reload: bool = True
@@ -75,7 +86,6 @@ class Settings:
     websocket_max_connections: int = 100
     
     # Audio settings
-    use_external_tts: bool = False
     audio: AudioSettings = None
     llm: LLMSettings = None
     logging: LoggingSettings = None
@@ -105,8 +115,13 @@ class Settings:
         self.secret_key = os.getenv("SECRET_KEY", self.secret_key)
         self.openai_api_key = os.getenv("OPENAI_API_KEY", self.openai_api_key)
         self.pico_access_key = os.getenv("PICO_ACCESS_KEY", self.pico_access_key)
-        self.use_external_tts = os.getenv("USE_EXTERNAL_TTS", "false").lower() == "true"
+        self.environment = os.getenv("ENVIRONMENT", self.environment)
+        self.debug = os.getenv("DEBUG", str(self.environment == "development")).lower() == "true"
+        self.audio.use_external_tts = os.getenv("USE_EXTERNAL_TTS", "true").lower() == "true"
         self.recipe_api_url = os.getenv("RECIPE_API_URL", self.recipe_api_url)
+        
+        # Parse nested environment variables
+        self._parse_nested_env_vars()
         
         # Set default allowed origins
         if self.allowed_origins is None:
@@ -114,9 +129,55 @@ class Settings:
                 "http://localhost:3000",
                 "http://localhost:3001", 
                 "http://127.0.0.1:3000",
-                "http://127.0.0.1:3001"
+                "http://127.0.0.1:3001",
+                "http://localhost:5173",  # Vite default port
+                "http://127.0.0.1:5173"
             ]
 
+    def _parse_nested_env_vars(self):
+        """Parse nested environment variables like AUDIO__SAMPLE_RATE"""
+        # Audio settings
+        if os.getenv("AUDIO__SAMPLE_RATE"):
+            self.audio.sample_rate = int(os.getenv("AUDIO__SAMPLE_RATE"))
+        if os.getenv("AUDIO__WHISPER_MODEL_SIZE"):
+            self.audio.whisper_model_size = os.getenv("AUDIO__WHISPER_MODEL_SIZE")
+        if os.getenv("AUDIO__WAKE_WORD_SENSITIVITY"):
+            self.audio.wake_word_sensitivity = float(os.getenv("AUDIO__WAKE_WORD_SENSITIVITY"))
+            
+        # LLM settings
+        if os.getenv("LLM__TEMPERATURE"):
+            self.llm.temperature = float(os.getenv("LLM__TEMPERATURE"))
+        if os.getenv("LLM__MAX_TOKENS"):
+            self.llm.max_tokens = int(os.getenv("LLM__MAX_TOKENS"))
+        if os.getenv("LLM__MODEL"):
+            self.llm.model = os.getenv("LLM__MODEL")
+            
+        # Logging settings
+        if os.getenv("LOGGING__LOG_LEVEL"):
+            self.logging.log_level = os.getenv("LOGGING__LOG_LEVEL")
+            
+    def get_chef_mode_config(self, mode: str) -> dict:
+        """Get configuration for a specific chef mode"""
+        mode_configs = {
+            "normal": {
+                "max_tokens": self.llm.max_tokens,
+                "temperature": self.llm.temperature
+            },
+            "sassy": {
+                "max_tokens": self.llm.sassy_max_tokens,
+                "temperature": self.llm.sassy_temperature
+            },
+            "gordon_ramsay": {
+                "max_tokens": self.llm.gordon_max_tokens,
+                "temperature": self.llm.gordon_temperature
+            }
+        }
+        return mode_configs.get(mode, mode_configs["normal"])
+        
+    def is_production(self) -> bool:
+        """Check if running in production environment"""
+        return self.environment == "production"
+        
     def get_wake_word_path(self) -> str:
         """Get absolute path to wake word model"""
         base_path = Path(__file__).parent.parent.parent.parent

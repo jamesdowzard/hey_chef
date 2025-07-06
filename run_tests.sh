@@ -37,9 +37,18 @@ check_service() {
     print_status "Checking $service_name at $url..."
     
     while [ $attempt -le $max_attempts ]; do
-        if curl -s -f "$url/health" > /dev/null 2>&1; then
-            print_status "$service_name is running ✅"
-            return 0
+        # For frontend, just check if the root URL responds
+        if [[ "$service_name" == "Frontend" ]]; then
+            if curl -s -f "$url" > /dev/null 2>&1; then
+                print_status "$service_name is running ✅"
+                return 0
+            fi
+        else
+            # For backend services, check /health endpoint
+            if curl -s -f "$url/health" > /dev/null 2>&1; then
+                print_status "$service_name is running ✅"
+                return 0
+            fi
         fi
         
         print_warning "$service_name not ready (attempt $attempt/$max_attempts)"
@@ -124,7 +133,7 @@ mkdir -p logs
 
 # Install testing dependencies
 print_status "Installing testing dependencies..."
-pip install -r testing/requirements.txt
+pip install -r backend/requirements.txt
 
 # Start services
 print_status "Starting Hey Chef v2 services..."
@@ -167,7 +176,7 @@ print_status "All services are ready! 🚀"
 
 # Run comprehensive test suite
 print_status "Running comprehensive test suite..."
-python testing/comprehensive_test_suite.py
+cd backend && python -m pytest -v && cd ../frontend && npm run test:run && cd ..
 
 # Check test results
 if [ $? -eq 0 ]; then
