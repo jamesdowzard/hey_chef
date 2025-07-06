@@ -255,7 +255,7 @@ export const App: React.FC = () => {
   );
 
   return (
-    <div className={`min-h-screen ${settings.ui.theme === 'dark' ? 'dark bg-gray-900' : 'bg-gray-50'}`}>
+    <div data-testid="app-container" className={`min-h-screen ${settings.ui.theme === 'dark' ? 'dark bg-gray-900' : 'bg-gray-50'}`}>
       {/* Header */}
       <header className="bg-white shadow-sm border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">

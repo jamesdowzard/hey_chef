@@ -42,8 +42,8 @@ class TestEnums:
     def test_audio_state_enum(self):
         """Test AudioState enum values."""
         assert AudioState.IDLE == "idle"
-        assert AudioState.LISTENING == "listening"
-        assert AudioState.PROCESSING == "processing"
+        assert AudioState.LISTENING_WAKE_WORD == "listening_wake_word"
+        assert AudioState.PROCESSING_AUDIO == "processing_audio"
         
     def test_chef_mode_enum(self):
         """Test ChefMode enum values."""
@@ -102,14 +102,20 @@ class TestConversationMessage:
         assert message.role == "user"
         assert message.content == "Test message"
         assert message.chef_mode == ChefMode.SASSY
-        assert isinstance(message.timestamp, datetime)
+        assert isinstance(message.created_at, datetime)
         
     def test_conversation_message_validation(self):
         """Test conversation message validation."""
+        # Test missing required fields
+        with pytest.raises(ValidationError):
+            ConversationMessage()  # Missing required role and content
+            
+        # Test invalid chef_mode
         with pytest.raises(ValidationError):
             ConversationMessage(
-                role="",  # Empty role should fail
-                content="Test message"
+                role="user",
+                content="Test message",
+                chef_mode="invalid_mode"
             )
 
 

@@ -181,11 +181,8 @@ export const createMockRecipe = (overrides = {}) => ({
   description: 'A test recipe for unit tests',
   prep_time: 15,
   cook_time: 30,
-  total_time: 45,
   servings: 4,
-  difficulty: 'medium',
   category: 'main_course',
-  cuisine: 'italian',
   ingredients: [
     '1 cup ingredient 1',
     '2 tbsp ingredient 2',
@@ -196,7 +193,7 @@ export const createMockRecipe = (overrides = {}) => ({
     'Step 2: Do something else',
     'Step 3: Finish the recipe'
   ],
-  tags: ['quick', 'easy', 'delicious'],
+  currentStep: 0,
   ...overrides
 });
 

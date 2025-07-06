@@ -77,7 +77,7 @@ export const RecipeList: React.FC<RecipeListProps> = ({
   };
 
   return (
-    <div className={`bg-white rounded-lg shadow-lg ${className}`}>
+    <div data-testid="recipe-list-container" className={`bg-white rounded-lg shadow-lg ${className}`}>
       {/* Header */}
       <div className="p-6 border-b border-gray-200">
         <div className="flex items-center space-x-3 mb-4">
@@ -89,6 +89,7 @@ export const RecipeList: React.FC<RecipeListProps> = ({
         <div className="relative mb-4">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
           <input
+            data-testid="recipe-search"
             type="text"
             placeholder="Search recipes..."
             value={searchQuery}
@@ -167,6 +168,7 @@ export const RecipeList: React.FC<RecipeListProps> = ({
             {recipes.data.map((recipe) => (
               <div
                 key={recipe.id}
+                data-testid="recipe-card"
                 onClick={() => onRecipeSelect(recipe)}
                 className={`
                   p-4 border rounded-lg cursor-pointer transition-all hover:shadow-md

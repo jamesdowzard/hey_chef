@@ -45,8 +45,8 @@ describe('RecipeViewer Component', () => {
 
   const defaultProps = {
     recipe: mockRecipe,
-    isVisible: true,
-    onClose: jest.fn(),
+    onStepChange: jest.fn(),
+    onBackToList: jest.fn(),
   };
 
   beforeEach(() => {
@@ -83,22 +83,28 @@ describe('RecipeViewer Component', () => {
     expect(screen.getByText('Season with salt and pepper')).toBeInTheDocument();
   });
 
-  it('calls onClose when close button is clicked', async () => {
+  it('calls onBackToList when back button is clicked', async () => {
     const user = userEvent.setup();
-    const onCloseMock = jest.fn();
+    const onBackToListMock = jest.fn();
     
-    render(<RecipeViewer {...defaultProps} onClose={onCloseMock} />);
+    render(<RecipeViewer {...defaultProps} onBackToList={onBackToListMock} />);
 
-    const closeButton = screen.getByLabelText(/close/i);
-    await user.click(closeButton);
+    const backButton = screen.getByTestId('back-to-list-button');
+    await user.click(backButton);
 
-    expect(onCloseMock).toHaveBeenCalledTimes(1);
+    expect(onBackToListMock).toHaveBeenCalledTimes(1);
   });
 
-  it('does not render when isVisible is false', () => {
-    render(<RecipeViewer {...defaultProps} isVisible={false} />);
+  it('calls onStepChange when step navigation is used', async () => {
+    const user = userEvent.setup();
+    const onStepChangeMock = jest.fn();
+    
+    render(<RecipeViewer {...defaultProps} onStepChange={onStepChangeMock} />);
 
-    expect(screen.queryByText('Test Spaghetti Recipe')).not.toBeInTheDocument();
+    const nextStepButton = screen.getByTestId('next-step-button');
+    await user.click(nextStepButton);
+
+    expect(onStepChangeMock).toHaveBeenCalledWith(1);
   });
 
   it('handles recipe with no ingredients gracefully', () => {

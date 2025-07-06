@@ -78,11 +78,12 @@ export const RecipeViewer: React.FC<RecipeViewerProps> = ({
   };
 
   return (
-    <div className={`bg-white rounded-lg shadow-lg overflow-hidden ${className}`}>
+    <div data-testid="recipe-viewer" className={`bg-white rounded-lg shadow-lg overflow-hidden ${className}`}>
       {/* Back to List Button */}
       {onBackToList && (
         <div className="p-4 border-b border-gray-200">
           <button
+            data-testid="back-to-list-button"
             onClick={onBackToList}
             className="flex items-center space-x-2 text-gray-600 hover:text-gray-800 transition-colors"
           >
@@ -106,7 +107,7 @@ export const RecipeViewer: React.FC<RecipeViewerProps> = ({
             />
             <div className="absolute inset-0 bg-black bg-opacity-40 flex items-end">
               <div className="p-6 text-white w-full">
-                <h1 className="text-2xl font-bold mb-2">{recipe.title}</h1>
+                <h1 data-testid="recipe-title" className="text-2xl font-bold mb-2">{recipe.title}</h1>
                 <p className="text-gray-200 text-sm">{recipe.description}</p>
               </div>
             </div>
@@ -115,7 +116,7 @@ export const RecipeViewer: React.FC<RecipeViewerProps> = ({
           <div className="bg-gradient-to-br from-primary-500 to-primary-700 p-6 text-white">
             <div className="flex items-center space-x-3 mb-2">
               <ChefHat className="w-8 h-8" />
-              <h1 className="text-2xl font-bold">{recipe.title}</h1>
+              <h1 data-testid="recipe-title" className="text-2xl font-bold">{recipe.title}</h1>
             </div>
             <p className="text-primary-100 text-sm">{recipe.description}</p>
           </div>
@@ -154,7 +155,7 @@ export const RecipeViewer: React.FC<RecipeViewerProps> = ({
       </div>
 
       {/* Ingredients */}
-      <div className="p-6 border-b border-gray-200">
+      <div data-testid="recipe-ingredients" className="p-6 border-b border-gray-200">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold">Ingredients</h2>
           <div className="text-sm text-gray-500">
@@ -162,11 +163,12 @@ export const RecipeViewer: React.FC<RecipeViewerProps> = ({
           </div>
         </div>
         <div className="grid grid-cols-1 gap-2">
-          {recipe.ingredients.map((ingredient) => {
-            const isChecked = checkedIngredients.has(ingredient.id);
+          {recipe.ingredients.map((ingredient, index) => {
+            const ingredientId = `ingredient-${index}`;
+            const isChecked = checkedIngredients.has(ingredientId);
             return (
               <div 
-                key={ingredient.id} 
+                key={ingredientId} 
                 className={`
                   flex items-center justify-between py-3 px-3 rounded-lg cursor-pointer transition-all duration-200
                   ${isChecked 
@@ -174,7 +176,7 @@ export const RecipeViewer: React.FC<RecipeViewerProps> = ({
                     : 'hover:bg-gray-50'
                   }
                 `}
-                onClick={() => toggleIngredient(ingredient.id)}
+                onClick={() => toggleIngredient(ingredientId)}
               >
                 <div className="flex items-center space-x-3">
                   <button
@@ -187,7 +189,7 @@ export const RecipeViewer: React.FC<RecipeViewerProps> = ({
                     `}
                     onClick={(e) => {
                       e.stopPropagation();
-                      toggleIngredient(ingredient.id);
+                      toggleIngredient(ingredientId);
                     }}
                   >
                     {isChecked && <CheckCircle className="w-3 h-3" />}
@@ -195,18 +197,8 @@ export const RecipeViewer: React.FC<RecipeViewerProps> = ({
                   <span className={`text-sm font-medium transition-all duration-200 ${
                     isChecked ? 'text-green-700 line-through' : 'text-gray-800'
                   }`}>
-                    {ingredient.name}
+                    {ingredient}
                   </span>
-                  {ingredient.notes && (
-                    <span className="text-xs text-gray-500 italic">
-                      ({ingredient.notes})
-                    </span>
-                  )}
-                </div>
-                <div className={`text-sm transition-all duration-200 ${
-                  isChecked ? 'text-green-600' : 'text-gray-600'
-                }`}>
-                  {ingredient.amount} {ingredient.unit}
                 </div>
               </div>
             );
@@ -215,7 +207,7 @@ export const RecipeViewer: React.FC<RecipeViewerProps> = ({
       </div>
 
       {/* Instructions */}
-      <div className="p-6">
+      <div data-testid="recipe-instructions" className="p-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-semibold">Instructions</h2>
           <div className="text-sm text-gray-500">
@@ -231,37 +223,9 @@ export const RecipeViewer: React.FC<RecipeViewerProps> = ({
                 {currentStep + 1}
               </div>
               <div className="flex-1">
-                <p className="text-gray-800 leading-relaxed text-lg mb-3">
-                  {recipe.instructions[currentStep]?.description}
+                <p className="text-gray-800 leading-relaxed text-lg">
+                  {recipe.instructions[currentStep]}
                 </p>
-                
-                {/* Step metadata */}
-                <div className="flex flex-wrap gap-4">
-                  {recipe.instructions[currentStep]?.duration && (
-                    <div className="flex items-center space-x-2 bg-white px-3 py-2 rounded-lg border border-primary-200">
-                      <Timer className="w-5 h-5 text-primary-600" />
-                      <span className="text-sm font-medium text-gray-700">
-                        {recipe.instructions[currentStep].duration} min
-                      </span>
-                    </div>
-                  )}
-                  {recipe.instructions[currentStep]?.temperature && (
-                    <div className="flex items-center space-x-2 bg-white px-3 py-2 rounded-lg border border-primary-200">
-                      <Thermometer className="w-5 h-5 text-red-500" />
-                      <span className="text-sm font-medium text-gray-700">
-                        {recipe.instructions[currentStep].temperature}
-                      </span>
-                    </div>
-                  )}
-                </div>
-
-                {recipe.instructions[currentStep]?.notes && (
-                  <div className="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                    <p className="text-sm text-yellow-800">
-                      <strong>Note:</strong> {recipe.instructions[currentStep].notes}
-                    </p>
-                  </div>
-                )}
               </div>
             </div>
           </div>
@@ -280,6 +244,7 @@ export const RecipeViewer: React.FC<RecipeViewerProps> = ({
           {/* Navigation Buttons */}
           <div className="flex items-center justify-between">
             <button
+              data-testid="previous-step-button"
               onClick={handlePreviousStep}
               disabled={currentStep === 0}
               className={`
@@ -320,6 +285,7 @@ export const RecipeViewer: React.FC<RecipeViewerProps> = ({
             </div>
 
             <button
+              data-testid="next-step-button"
               onClick={handleNextStep}
               disabled={currentStep === totalSteps - 1}
               className={`
