@@ -87,8 +87,8 @@ class Settings:
     max_recording_duration: int = 30  # Maximum recording duration in seconds
     
     # File paths
-    wake_word_model_path: str = "../../models/porcupine_models/hey_chef.ppn"
-    config_directory: str = "../../config"
+    wake_word_model_path: str = "../models/porcupine_models/hey_chef.ppn"
+    config_directory: str = "../config"
 
     def __post_init__(self):
         """Initialize settings from environment variables"""
@@ -119,7 +119,7 @@ class Settings:
 
     def get_wake_word_path(self) -> str:
         """Get absolute path to wake word model"""
-        base_path = Path(__file__).parent.parent.parent.parent.parent
+        base_path = Path(__file__).parent.parent.parent.parent
         return str(base_path / "models" / "porcupine_models" / "hey_chef.ppn")
 
 

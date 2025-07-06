@@ -6,9 +6,9 @@ echo "🍳 Starting Hey Chef v2 Development Environment..."
 
 # Check if we're in the right directory
 if [[ ! -d "backend" ]] || [[ ! -d "frontend" ]]; then
-    echo "❌ Please run this script from the hey_chef_v2 directory"
+    echo "❌ Please run this script from the hey_chef root directory"
     echo "   Current directory: $(pwd)"
-    echo "   Expected: /path/to/hey_chef/hey_chef_v2"
+    echo "   Expected: /path/to/hey_chef"
     exit 1
 fi
 

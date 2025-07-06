@@ -85,7 +85,7 @@ kill_by_pattern "uvicorn.*main:" "Uvicorn Server"
 
 # Additional cleanup for any Node processes in the frontend directory
 echo "🔍 Checking for Node processes in Hey Chef frontend directory..."
-frontend_dir="/Users/jamesdowzard/Documents/code/gh/hey_chef/hey_chef_v2/frontend"
+frontend_dir="/Users/jamesdowzard/Documents/code/gh/hey_chef/frontend"
 node_pids=$(ps aux | grep "node.*$frontend_dir" | grep -v grep | awk '{print $2}')
 
 if [[ -n "$node_pids" ]]; then
@@ -96,7 +96,7 @@ fi
 
 # Additional cleanup for any Python processes in the backend directory
 echo "🔍 Checking for Python processes in Hey Chef backend directory..."
-backend_dir="/Users/jamesdowzard/Documents/code/gh/hey_chef/hey_chef_v2/backend"
+backend_dir="/Users/jamesdowzard/Documents/code/gh/hey_chef/backend"
 python_pids=$(ps aux | grep "python.*$backend_dir" | grep -v grep | awk '{print $2}')
 
 if [[ -n "$python_pids" ]]; then

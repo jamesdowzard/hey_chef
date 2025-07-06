@@ -109,7 +109,7 @@ cleanup() {
     stop_service "Notion MCP" "notion.pid"
     
     # Clean up any remaining processes
-    pkill -f "hey_chef_v2_api" 2>/dev/null || true
+    pkill -f "hey_chef.*api" 2>/dev/null || true
     pkill -f "notion_mcp_server" 2>/dev/null || true
     pkill -f "npm run dev" 2>/dev/null || true
     

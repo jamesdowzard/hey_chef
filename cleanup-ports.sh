@@ -52,12 +52,12 @@ pkill -9 -f "hey_chef" 2>/dev/null && echo "   ✅ Hey Chef processes killed" ||
 pkill -9 -f "hey-chef" 2>/dev/null && echo "   ✅ Hey-Chef processes killed" || echo "   ✅ No Hey-Chef processes found"
 
 # Kill Node processes in the frontend directory
-frontend_dir="/Users/jamesdowzard/Documents/code/gh/hey_chef/hey_chef_v2/frontend"
+frontend_dir="/Users/jamesdowzard/Documents/code/gh/hey_chef/frontend"
 echo "💥 Killing Node processes in frontend directory..."
 pkill -9 -f "node.*$frontend_dir" 2>/dev/null && echo "   ✅ Frontend Node processes killed" || echo "   ✅ No frontend Node processes found"
 
 # Kill Python processes in the backend directory  
-backend_dir="/Users/jamesdowzard/Documents/code/gh/hey_chef/hey_chef_v2/backend"
+backend_dir="/Users/jamesdowzard/Documents/code/gh/hey_chef/backend"
 echo "💥 Killing Python processes in backend directory..."
 pkill -9 -f "python.*$backend_dir" 2>/dev/null && echo "   ✅ Backend Python processes killed" || echo "   ✅ No backend Python processes found"
 
