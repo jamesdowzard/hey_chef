@@ -11,10 +11,23 @@ from typing import Optional, Dict, Any
 from pathlib import Path
 import requests
 
-# Silence Streamlit warnings
+# Silence Streamlit and PyTorch warnings
 warnings.filterwarnings("ignore", category=UserWarning)
+warnings.filterwarnings("ignore", message=".*torch.classes.*")
+warnings.filterwarnings("ignore", message=".*missing ScriptRunContext.*")
 import logging
+
+# Custom filter to suppress PyTorch inspection errors from Streamlit's file watcher
+class SuppressPyTorchFilter(logging.Filter):
+    def filter(self, record):
+        # Suppress the "Examining the path of torch.classes" error
+        message = record.getMessage()
+        return not ("torch.classes" in message or "torch._classes" in str(record.exc_info))
+
+# Apply filters to Streamlit loggers
 logging.getLogger("streamlit").setLevel(logging.ERROR)
+logging.getLogger("streamlit.watcher.local_sources_watcher").addFilter(SuppressPyTorchFilter())
+logging.getLogger("streamlit.web.bootstrap").addFilter(SuppressPyTorchFilter())
 
 from ..audio import WakeWordDetector, WhisperSTT, TTSEngine
 from ..ai import LLMClient
